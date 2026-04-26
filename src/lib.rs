@@ -24,7 +24,7 @@
 //! # Example
 //!
 //! ```
-//! use lambert_izzo::lambert;
+//! use lambert_izzo::{lambert, TransferWay};
 //! use nalgebra::Vector3;
 //!
 //! // LEO → LEO 90° transfer at 7000 km altitude.
@@ -33,7 +33,7 @@
 //! let r2_km = Vector3::new(0.0, 7000.0, 0.0);
 //! let tof_s = core::f64::consts::PI / 2.0 * (7000.0_f64.powi(3) / mu_km3_s2).sqrt();
 //!
-//! let solutions = lambert(r1_km, r2_km, tof_s, mu_km3_s2, false, 0).unwrap();
+//! let solutions = lambert(r1_km, r2_km, tof_s, mu_km3_s2, TransferWay::Short, 0).unwrap();
 //! assert_eq!(solutions.len(), 1);
 //! ```
 
@@ -42,6 +42,19 @@
 #![allow(clippy::module_name_repetitions)] // LambertError, LambertSolution
 
 use nalgebra::Vector3;
+
+/// Direction around the transfer plane from `r1` to `r2`.
+///
+/// `Short` is the geodesic transfer (`θ ≤ π`); `Long` traverses the other
+/// way (`θ > π`). This is independent of prograde/retrograde — the orbit's
+/// angular-momentum direction is set by the order of the `(r1, r2)` arguments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferWay {
+    /// `θ ≤ π` — the short geodesic arc.
+    Short,
+    /// `θ > π` — the long way around the transfer plane.
+    Long,
+}
 
 pub mod constants;
 mod error;
@@ -84,7 +97,7 @@ pub struct LambertSolution {
 /// - `r1_km`, `r2_km`: position vectors (km), in any consistent inertial frame.
 /// - `tof_s`: time of flight (s), `> 0`.
 /// - `mu_km3_s2`: gravitational parameter (km³/s²), `> 0`.
-/// - `cw`: if `true`, force the long-way (clockwise) transfer.
+/// - `way`: short or long way around the transfer plane (see [`TransferWay`]).
 /// - `multi_revs`: maximum revolution count `M` to search. `0` returns
 ///   single-rev only.
 ///
@@ -109,10 +122,10 @@ pub fn lambert(
     r2_km: Vector3<f64>,
     tof_s: f64,
     mu_km3_s2: f64,
-    cw: bool,
+    way: TransferWay,
     multi_revs: u32,
 ) -> Result<Vec<LambertSolution>, LambertError> {
-    let geom = Geometry::from_inputs(r1_km, r2_km, tof_s, mu_km3_s2, cw)?;
+    let geom = Geometry::from_inputs(r1_km, r2_km, tof_s, mu_km3_s2, way)?;
     let xy_pairs = find_xy(&geom, multi_revs)?;
 
     let mut out = Vec::with_capacity(xy_pairs.len());
@@ -166,7 +179,7 @@ mod tests {
 
         let r1_km = Vector3::new(r_km, 0.0, 0.0);
         let r2_km = Vector3::new(0.0, r_km, 0.0);
-        let sols = lambert(r1_km, r2_km, period_s / 4.0, mu, false, 0).unwrap();
+        let sols = lambert(r1_km, r2_km, period_s / 4.0, mu, TransferWay::Short, 0).unwrap();
         assert_eq!(sols.len(), 1);
         assert!(vec_approx(
             sols[0].v1_km_s,
@@ -190,7 +203,7 @@ mod tests {
 
         let r1_km = Vector3::new(r_km, 0.0, 0.0);
         let r2_km = Vector3::new(0.0, r_km, 0.0);
-        let sols = lambert(r1_km, r2_km, 3.0 * period_s / 4.0, mu, true, 0).unwrap();
+        let sols = lambert(r1_km, r2_km, 3.0 * period_s / 4.0, mu, TransferWay::Long, 0).unwrap();
         assert_eq!(sols.len(), 1);
         assert!(vec_approx(
             sols[0].v1_km_s,
@@ -217,7 +230,7 @@ mod tests {
         let r1_km = Vector3::new(r1_norm_km, 0.0, 0.0);
         // 1 km off-plane to dodge the colinearity edge case.
         let r2_km = Vector3::new(-r2_norm_km, 1.0, 0.0);
-        let sols = lambert(r1_km, r2_km, tof_s, mu, false, 0).unwrap();
+        let sols = lambert(r1_km, r2_km, tof_s, mu, TransferWay::Short, 0).unwrap();
         // Periapsis velocity: vis-viva at r = 1 AU on the transfer ellipse.
         let v_peri_km_s = (mu * (2.0 / r1_norm_km - 1.0 / a_km)).sqrt();
         // Tolerance ~1 m/s — the off-plane perturbation moves things slightly.
@@ -231,7 +244,7 @@ mod tests {
         let r1_km = Vector3::new(8000.0, 0.0, 0.0);
         let r2_km = Vector3::new(5600.0, 5600.0, 0.0);
         let period_s = 2.0 * PI * (8000.0_f64.powi(3) / mu).sqrt();
-        let sols = lambert(r1_km, r2_km, 5.0 * period_s, mu, false, 3).unwrap();
+        let sols = lambert(r1_km, r2_km, 5.0 * period_s, mu, TransferWay::Short, 3).unwrap();
         assert!(sols.len() >= 3, "got {} solutions", sols.len());
         for s in &sols {
             let r1n = r1_km.norm();
@@ -248,7 +261,7 @@ mod tests {
         let r1_km = Vector3::new(10_500.0, 1400.0, 700.0);
         let r2_km = Vector3::new(-2800.0, 9100.0, -1400.0);
         let tof_s = 4500.0;
-        let sols = lambert(r1_km, r2_km, tof_s, mu, false, 0).unwrap();
+        let sols = lambert(r1_km, r2_km, tof_s, mu, TransferWay::Short, 0).unwrap();
         let v1_km_s = sols[0].v1_km_s;
         let r2_prop_km = kepler_propagate(r1_km, v1_km_s, tof_s, mu);
         let err_km = (r2_prop_km - r2_km).norm();
@@ -259,7 +272,7 @@ mod tests {
     fn errors_on_non_positive_tof() {
         let r1_km = Vector3::new(7000.0, 0.0, 0.0);
         let r2_km = Vector3::new(0.0, 7000.0, 0.0);
-        let err = lambert(r1_km, r2_km, 0.0, MU_EARTH_KM3_S2, false, 0).unwrap_err();
+        let err = lambert(r1_km, r2_km, 0.0, MU_EARTH_KM3_S2, TransferWay::Short, 0).unwrap_err();
         assert!(matches!(err, LambertError::NonPositiveTimeOfFlight { tof_s } if tof_s == 0.0));
     }
 
@@ -267,7 +280,7 @@ mod tests {
     fn errors_on_zero_position_vector() {
         let r1_km = Vector3::zeros();
         let r2_km = Vector3::new(0.0, 7000.0, 0.0);
-        let err = lambert(r1_km, r2_km, 1000.0, MU_EARTH_KM3_S2, false, 0).unwrap_err();
+        let err = lambert(r1_km, r2_km, 1000.0, MU_EARTH_KM3_S2, TransferWay::Short, 0).unwrap_err();
         assert!(matches!(
             err,
             LambertError::DegeneratePositionVector { which: 1, .. }
@@ -278,7 +291,7 @@ mod tests {
     fn errors_on_colinear_geometry() {
         let r1_km = Vector3::new(7000.0, 0.0, 0.0);
         let r2_km = Vector3::new(14_000.0, 0.0, 0.0);
-        let err = lambert(r1_km, r2_km, 1000.0, MU_EARTH_KM3_S2, false, 0).unwrap_err();
+        let err = lambert(r1_km, r2_km, 1000.0, MU_EARTH_KM3_S2, TransferWay::Short, 0).unwrap_err();
         assert!(matches!(err, LambertError::CollinearGeometry { .. }));
     }
 
@@ -286,7 +299,7 @@ mod tests {
     fn errors_on_non_positive_mu() {
         let r1_km = Vector3::new(7000.0, 0.0, 0.0);
         let r2_km = Vector3::new(0.0, 7000.0, 0.0);
-        let err = lambert(r1_km, r2_km, 1000.0, 0.0, false, 0).unwrap_err();
+        let err = lambert(r1_km, r2_km, 1000.0, 0.0, TransferWay::Short, 0).unwrap_err();
         assert!(matches!(err, LambertError::NonPositiveMu { mu_km3_s2 } if mu_km3_s2 == 0.0));
     }
 
@@ -299,7 +312,7 @@ mod tests {
         let r1_km = Vector3::new(7000.0, 0.0, 0.0);
         let r2_km = Vector3::new(0.0, 42_000.0, 0.0);
         let tof_s = 7200.0;
-        let sols = lambert(r1_km, r2_km, tof_s, mu, false, 0).unwrap();
+        let sols = lambert(r1_km, r2_km, tof_s, mu, TransferWay::Short, 0).unwrap();
         let s = sols[0];
         assert!(
             (s.x - 1.0).abs() < 0.01,
@@ -321,7 +334,7 @@ mod tests {
         let r1_km = Vector3::new(7000.0, 0.0, 0.0);
         let r2_km = Vector3::new(0.0, 200_000.0, 0.0);
         let tof_s = 30_000.0;
-        let sols = lambert(r1_km, r2_km, tof_s, mu, false, 0).unwrap();
+        let sols = lambert(r1_km, r2_km, tof_s, mu, TransferWay::Short, 0).unwrap();
         let s = sols[0];
         assert!(s.x > 1.0, "expected hyperbolic (x > 1), got x = {}", s.x);
         let energy = 0.5 * s.v1_km_s.dot(&s.v1_km_s) - mu / r1_km.norm();
@@ -341,7 +354,7 @@ mod tests {
         let r2_km = Vector3::new(5600.0, 5600.0, 0.0);
         let period_s = 2.0 * PI * (8000.0_f64.powi(3) / mu).sqrt();
         let tof_s = 5.0 * period_s;
-        let sols = lambert(r1_km, r2_km, tof_s, mu, false, 3).unwrap();
+        let sols = lambert(r1_km, r2_km, tof_s, mu, TransferWay::Short, 3).unwrap();
 
         let multi: Vec<_> = sols.iter().filter(|s| s.n_revs > 0).collect();
         assert!(!multi.is_empty(), "no multi-rev branches found");
@@ -411,8 +424,8 @@ mod tests {
             let r1_km = rand_unit_vec(&mut rng) * rng.sample(radius);
             let r2_km = rand_unit_vec(&mut rng) * rng.sample(radius);
             let tof_s = rng.sample(tof);
-            let cw = rng.gen_bool(0.5);
-            let Ok(sols) = lambert(r1_km, r2_km, tof_s, mu, cw, 0) else {
+            let way = if rng.gen_bool(0.5) { TransferWay::Long } else { TransferWay::Short };
+            let Ok(sols) = lambert(r1_km, r2_km, tof_s, mu, way, 0) else {
                 continue;
             };
             lambert_ok += 1;
@@ -457,7 +470,7 @@ mod tests {
             let r1_km = rand_unit_vec(&mut rng) * rng.sample(radius);
             let r2_km = rand_unit_vec(&mut rng) * rng.sample(radius);
             let tof_s = rng.sample(tof);
-            let Ok(sols) = lambert(r1_km, r2_km, tof_s, mu, false, 3) else {
+            let Ok(sols) = lambert(r1_km, r2_km, tof_s, mu, TransferWay::Short, 3) else {
                 continue;
             };
             for s in &sols {

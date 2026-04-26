@@ -10,7 +10,7 @@ Supports:
 
 - Single-revolution transfers
 - Multi-revolution transfers (long-period and short-period branches)
-- Short-way and long-way transfers (`cw` flag); prograde vs retrograde
+- Short-way and long-way transfers (`way: TransferWay`); prograde vs retrograde
   is the caller's choice via the `(r1, r2)` ordering, since
   `r1 × r2` defines the resulting orbit's angular-momentum direction
 - WASM-compatible math kernel (`cargo build --target wasm32-unknown-unknown --lib`)
@@ -35,7 +35,7 @@ frame info.
 ## Usage
 
 ```rust
-use lambert_izzo::lambert;
+use lambert_izzo::{lambert, TransferWay};
 use nalgebra::Vector3;
 
 // LEO → MEO Hohmann transfer.
@@ -45,7 +45,7 @@ let r2_km = Vector3::new(-12_000.0, 1.0, 0.0); // 1 km off-axis avoids colineari
 let a_km = (7000.0 + 12_000.0) / 2.0;
 let tof_s = std::f64::consts::PI * (a_km.powi(3) / mu_km3_s2).sqrt();
 
-let solutions = lambert(r1_km, r2_km, tof_s, mu_km3_s2, false, 0).unwrap();
+let solutions = lambert(r1_km, r2_km, tof_s, mu_km3_s2, TransferWay::Short, 0).unwrap();
 let sol = &solutions[0];
 println!("v1 = {} km/s", sol.v1_km_s);
 println!("v2 = {} km/s", sol.v2_km_s);
@@ -60,7 +60,7 @@ pub fn lambert(
     r2_km: Vector3<f64>,    // final position (km), same frame
     tof_s: f64,             // time of flight (s), > 0
     mu_km3_s2: f64,         // gravitational parameter (km³/s²), > 0
-    cw: bool,               // false = short way, true = long way
+    way: TransferWay,       // Short or Long way around the transfer plane
     multi_revs: u32,        // max revolution count (0 = single-rev only)
 ) -> Result<Vec<LambertSolution>, LambertError>
 ```
@@ -72,7 +72,7 @@ branches (if any) follow as `(long-period, short-period)` pairs.
 `LambertError` is a `thiserror` enum with structured fields:
 
 ```rust
-match lambert(r1_km, r2_km, tof_s, mu_km3_s2, false, 0) {
+match lambert(r1_km, r2_km, tof_s, mu_km3_s2, TransferWay::Short, 0) {
     Ok(sols) => /* … */,
     Err(LambertError::NonPositiveTimeOfFlight { tof_s })       => /* … */,
     Err(LambertError::NonPositiveMu { mu_km3_s2 })             => /* … */,

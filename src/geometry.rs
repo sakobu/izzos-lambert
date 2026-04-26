@@ -12,7 +12,7 @@ use crate::error::LambertError;
 /// Pre-computed geometry for a Lambert boundary problem.
 ///
 /// All scalars and unit vectors derive from `(r1_km, r2_km, tof_s, mu_km3_s2,
-/// cw)`. The solver kernels consume `lambda` and `big_t` (non-dimensional
+/// way)`. The solver kernels consume `lambda` and `big_t` (non-dimensional
 /// TOF); the velocity reconstruction in [`crate::lambert`] consumes the rest.
 ///
 /// Field names are math-domain names (paper symbols), not unit-tagged —
@@ -37,9 +37,9 @@ pub(crate) struct Geometry {
     pub ir1: Vector3<f64>,
     /// Unit vector along `r2`.
     pub ir2: Vector3<f64>,
-    /// In-plane tangent at `r1` (sign-corrected for `cw`).
+    /// In-plane tangent at `r1` (sign-corrected for long-way transfers).
     pub it1: Vector3<f64>,
-    /// In-plane tangent at `r2` (sign-corrected for `cw`).
+    /// In-plane tangent at `r2` (sign-corrected for long-way transfers).
     pub it2: Vector3<f64>,
 }
 
@@ -61,7 +61,7 @@ impl Geometry {
         r2_km: Vector3<f64>,
         tof_s: f64,
         mu_km3_s2: f64,
-        cw: bool,
+        way: crate::TransferWay,
     ) -> Result<Self, LambertError> {
         if tof_s <= 0.0 {
             return Err(LambertError::NonPositiveTimeOfFlight { tof_s });
@@ -99,9 +99,9 @@ impl Geometry {
 
         // λ² = 1 − c/s, λ ∈ [-1, 1]. Default convention: prograde
         // (counter-clockwise about ih) with θ ∈ [0, π] → λ > 0.
-        // For long-way (cw flag) we flip λ AND the tangent direction.
+        // For long-way we flip λ AND the tangent direction.
         let mut lambda = (1.0 - c / s).max(0.0).sqrt();
-        let (it1_raw, it2_raw) = if cw {
+        let (it1_raw, it2_raw) = if matches!(way, crate::TransferWay::Long) {
             lambda = -lambda;
             (ir1.cross(&ih), ir2.cross(&ih))
         } else {
