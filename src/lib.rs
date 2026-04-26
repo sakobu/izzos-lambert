@@ -368,9 +368,10 @@ mod tests {
         let sols = lambert(r1_km, r2_km, tof_s, mu, TransferWay::Short, RevolutionBudget::SingleOnly).unwrap();
         let s = sols[0];
         assert!(
-            (s.diagnostics.lancaster_blanchard_x - 1.0).abs() < 0.01,
-            "x = {} not in Battin band [0.99, 1.01]",
-            s.diagnostics.lancaster_blanchard_x
+            (s.diagnostics.lancaster_blanchard_x - 1.0).abs() < crate::constants::BATTIN_THRESHOLD,
+            "x = {} not in Battin band [1 - {tol}, 1 + {tol}]",
+            s.diagnostics.lancaster_blanchard_x,
+            tol = crate::constants::BATTIN_THRESHOLD,
         );
         let r2_prop = kepler_propagate(r1_km, s.v1_km_s, tof_s, mu);
         let err_km = (r2_prop - r2_km).norm();
@@ -445,6 +446,43 @@ mod tests {
                     s.n_revs
                 );
             }
+        }
+    }
+
+    #[test]
+    fn solution_ordering_contract() {
+        // The LambertSolution doc promises:
+        //   index 0: single-rev (n_revs = 0)
+        //   then: (M=1 long-period, M=1 short-period, M=2 long, M=2 short, ...)
+        // Long-period x is smaller than short-period x within each M (Izzo §3).
+        let mu = MU_EARTH_KM3_S2;
+        let r1_km = Vector3::new(8000.0, 0.0, 0.0);
+        let r2_km = Vector3::new(5600.0, 5600.0, 0.0);
+        let period_s = 2.0 * PI * (8000.0_f64.powi(3) / mu).sqrt();
+        let tof_s = 5.0 * period_s;
+        let sols = lambert(
+            r1_km, r2_km, tof_s, mu,
+            TransferWay::Short, RevolutionBudget::up_to(3),
+        ).unwrap();
+
+        // Index 0 is always single-rev.
+        assert_eq!(sols[0].n_revs, 0, "index 0 must be single-rev");
+
+        // Multi-rev branches: paired, ascending M, long-period before short-period.
+        let multi = &sols[1..];
+        assert_eq!(multi.len() % 2, 0, "multi-rev branches must be paired");
+
+        let mut prev_m = 0_u32;
+        for pair in multi.chunks(2) {
+            assert_eq!(pair[0].n_revs, pair[1].n_revs, "pair shares n_revs");
+            assert!(pair[0].n_revs > prev_m, "M strictly ascending across pairs");
+            assert!(
+                pair[0].diagnostics.lancaster_blanchard_x
+                    < pair[1].diagnostics.lancaster_blanchard_x,
+                "long-period x must precede short-period x within pair (M = {})",
+                pair[0].n_revs,
+            );
+            prev_m = pair[0].n_revs;
         }
     }
 
