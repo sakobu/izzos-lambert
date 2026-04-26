@@ -24,9 +24,10 @@
 //! # Example
 //!
 //! ```
-//! use lambert_izzo::{lambert, RevolutionBudget, TransferWay};
+//! use lambert_izzo::{lambert, LambertError, RevolutionBudget, TransferWay};
 //! use nalgebra::Vector3;
 //!
+//! # fn main() -> Result<(), LambertError> {
 //! // LEO → LEO 90° transfer at 7000 km altitude.
 //! let mu_km3_s2 = 398_600.4418;
 //! let r1_km = Vector3::new(7000.0, 0.0, 0.0);
@@ -36,12 +37,15 @@
 //! let solutions = lambert(
 //!     r1_km, r2_km, tof_s, mu_km3_s2,
 //!     TransferWay::Short, RevolutionBudget::SingleOnly,
-//! ).unwrap();
+//! )?;
 //! assert_eq!(solutions.len(), 1);
+//! # Ok(())
+//! # }
 //! ```
 
 #![warn(missing_docs)]
 #![warn(clippy::pedantic)]
+#![warn(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unreachable)]
 #![allow(clippy::module_name_repetitions)] // LambertError, LambertSolution
 
 use nalgebra::Vector3;
@@ -136,7 +140,44 @@ pub struct LambertSolution {
     pub diagnostics: SolverDiagnostics,
 }
 
-/// Solve Lambert's boundary-value problem.
+/// Solve Lambert's boundary-value problem using Izzo's revisited algorithm.
+///
+/// Householder iteration over Lancaster's free parameter `x`, dispatching
+/// across three TOF regimes (Battin / Lancaster–Blanchard / Lagrange) for
+/// numerical stability. Mathematically frame-invariant — pass `r1_km` and
+/// `r2_km` in any consistent inertial frame and the returned velocities are
+/// in that same frame.
+///
+/// Returns the single-revolution solution plus every reachable multi-rev
+/// branch up to `revolutions.max()`.
+///
+/// # Invariants
+///
+/// All preconditions are validated at entry and returned as `Err(...)` on
+/// violation — never panicked.
+///
+/// - `tof_s > 0`
+/// - `mu_km3_s2 > 0`
+/// - `|r1_km| >= constants::MIN_POSITION_NORM_KM`
+/// - `|r2_km| >= constants::MIN_POSITION_NORM_KM`
+/// - Transfer angle ∉ {0, π}, equivalently
+///   `|r1_km × r2_km| / (|r1_km| · |r2_km|) >= constants::COLINEARITY_TOL`.
+///
+/// # Validity / near-degenerate behavior
+///
+/// - **Transfer angle near `0` or `π`** — the transfer plane is undefined;
+///   returns [`LambertError::CollinearGeometry`]. Callers near these
+///   boundaries should perturb one position by ≈ 1 km off-plane (the
+///   `earth_mars_hohmann` test demonstrates this idiom).
+/// - **Near-parabolic (`|x − 1| ≤ 0.01`)** — the Lagrange and Lancaster TOF
+///   formulations lose precision; the solver switches to Battin's
+///   hypergeometric series (Izzo Eq. 20) automatically.
+/// - **Hyperbolic transfers (`x > 1`)** — admitted on the single-rev branch;
+///   multi-revolution solutions do not exist on a hyperbola and are silently
+///   skipped.
+/// - **Multi-rev infeasibility** — for `M ≥ 1`, the branch admits a solution
+///   only when `tof_s ≥ T_min(M, λ)`. Higher-`M` branches are dropped from
+///   the returned vector when their `T_min` exceeds the requested TOF.
 ///
 /// # Arguments
 ///
@@ -204,7 +245,7 @@ pub fn lambert(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::similar_names)] // r_km/r1_km/r2_km test scenario inputs follow paper convention.
+    #![allow(clippy::similar_names, clippy::unwrap_used)] // r_km/r1_km/r2_km test scenario inputs follow paper convention; tests are exempt from the lib's no-unwrap rule.
 
     use super::*;
     use crate::test_helpers::kepler_propagate;
