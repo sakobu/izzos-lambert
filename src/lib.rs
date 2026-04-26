@@ -218,9 +218,6 @@ mod tests {
     fn approx(a: f64, b: f64, tol: f64) -> bool {
         (a - b).abs() < tol
     }
-    fn vec_approx(a: Vector3<f64>, b: Vector3<f64>, tol: f64) -> bool {
-        approx(a.x, b.x, tol) && approx(a.y, b.y, tol) && approx(a.z, b.z, tol)
-    }
 
     #[test]
     fn quarter_circle_leo() {
@@ -234,16 +231,8 @@ mod tests {
         let r2_km = Vector3::new(0.0, r_km, 0.0);
         let sols = lambert(r1_km, r2_km, period_s / 4.0, mu, TransferWay::Short, RevolutionBudget::SingleOnly).unwrap();
         assert_eq!(sols.len(), 1);
-        assert!(vec_approx(
-            sols[0].v1_km_s,
-            Vector3::new(0.0, v_circ, 0.0),
-            1e-9
-        ));
-        assert!(vec_approx(
-            sols[0].v2_km_s,
-            Vector3::new(-v_circ, 0.0, 0.0),
-            1e-9
-        ));
+        assert!((sols[0].v1_km_s - Vector3::new(0.0, v_circ, 0.0)).norm() < 1e-9);
+        assert!((sols[0].v2_km_s - Vector3::new(-v_circ, 0.0, 0.0)).norm() < 1e-9);
     }
 
     #[test]
@@ -258,16 +247,8 @@ mod tests {
         let r2_km = Vector3::new(0.0, r_km, 0.0);
         let sols = lambert(r1_km, r2_km, 3.0 * period_s / 4.0, mu, TransferWay::Long, RevolutionBudget::SingleOnly).unwrap();
         assert_eq!(sols.len(), 1);
-        assert!(vec_approx(
-            sols[0].v1_km_s,
-            Vector3::new(0.0, -v_circ, 0.0),
-            1e-9
-        ));
-        assert!(vec_approx(
-            sols[0].v2_km_s,
-            Vector3::new(v_circ, 0.0, 0.0),
-            1e-9
-        ));
+        assert!((sols[0].v1_km_s - Vector3::new(0.0, -v_circ, 0.0)).norm() < 1e-9);
+        assert!((sols[0].v2_km_s - Vector3::new(v_circ, 0.0, 0.0)).norm() < 1e-9);
     }
 
     #[test]

@@ -53,7 +53,9 @@ pub(crate) fn find_xy(
     let x0 = initial_guess_single_rev(big_t, t00, t1, lambda);
     let (x, iters) = householder(x0, big_t, lambda, 0)?;
     let y = compute_y(x, lambda);
-    let mut out = vec![Root { x, y, n_revs: 0, iters }];
+    let cap = 1 + 2 * revolutions.max() as usize; // u32 → usize: always safe (usize ≥ 32 bits)
+    let mut out = Vec::with_capacity(cap);
+    out.push(Root { x, y, n_revs: 0, iters });
 
     // Multi-rev branches. Iterate upward from M = 1; stop at the first
     // infeasible branch. T_min(M) is monotonically increasing in M, so once

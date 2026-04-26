@@ -47,7 +47,7 @@ pub(crate) fn kepler_propagate(
     mu_km3_s2: f64,
 ) -> Vector3<f64> {
     let r0n = r0_km.norm();
-    let v0n2 = v0_km_s.dot(&v0_km_s);
+    let v0n2 = v0_km_s.norm_squared();
     let alpha = 2.0 / r0n - v0n2 / mu_km3_s2; // 1/a
     let sqrt_mu = mu_km3_s2.sqrt();
     let sigma0 = r0_km.dot(&v0_km_s) / sqrt_mu;
