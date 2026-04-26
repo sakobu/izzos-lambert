@@ -24,7 +24,7 @@
 //! # Example
 //!
 //! ```
-//! use lambert_izzo::{lambert, TransferWay};
+//! use lambert_izzo::{lambert, RevolutionBudget, TransferWay};
 //! use nalgebra::Vector3;
 //!
 //! // LEO → LEO 90° transfer at 7000 km altitude.
@@ -33,7 +33,10 @@
 //! let r2_km = Vector3::new(0.0, 7000.0, 0.0);
 //! let tof_s = core::f64::consts::PI / 2.0 * (7000.0_f64.powi(3) / mu_km3_s2).sqrt();
 //!
-//! let solutions = lambert(r1_km, r2_km, tof_s, mu_km3_s2, TransferWay::Short, 0).unwrap();
+//! let solutions = lambert(
+//!     r1_km, r2_km, tof_s, mu_km3_s2,
+//!     TransferWay::Short, RevolutionBudget::SingleOnly,
+//! ).unwrap();
 //! assert_eq!(solutions.len(), 1);
 //! ```
 
@@ -54,6 +57,40 @@ pub enum TransferWay {
     Short,
     /// `θ > π` — the long way around the transfer plane.
     Long,
+}
+
+/// Maximum number of complete revolutions to consider beyond single-rev.
+///
+/// Multi-revolution branches admit two solutions per revolution count `M`
+/// (long-period and short-period), so the total solution count is
+/// `1 + 2 · min(max(), ⌊T/π⌋)` adjusted downward when a branch's `T_min`
+/// exceeds the requested time of flight.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RevolutionBudget {
+    /// Solve the single-revolution case only — always exactly one solution.
+    SingleOnly,
+    /// Search up to `M` complete revolutions inclusive (`M ≥ 1`).
+    UpTo(core::num::NonZeroU32),
+}
+
+impl RevolutionBudget {
+    /// Convenience constructor: `up_to(0)` collapses to `SingleOnly`.
+    #[must_use]
+    pub fn up_to(m: u32) -> Self {
+        match core::num::NonZeroU32::new(m) {
+            Some(nz) => Self::UpTo(nz),
+            None => Self::SingleOnly,
+        }
+    }
+
+    /// The maximum revolution count this budget will search (`0` for single-only).
+    #[must_use]
+    pub fn max(self) -> u32 {
+        match self {
+            Self::SingleOnly => 0,
+            Self::UpTo(n) => n.get(),
+        }
+    }
 }
 
 pub mod constants;
@@ -98,12 +135,11 @@ pub struct LambertSolution {
 /// - `tof_s`: time of flight (s), `> 0`.
 /// - `mu_km3_s2`: gravitational parameter (km³/s²), `> 0`.
 /// - `way`: short or long way around the transfer plane (see [`TransferWay`]).
-/// - `multi_revs`: maximum revolution count `M` to search. `0` returns
-///   single-rev only.
+/// - `revolutions`: revolution budget — see [`RevolutionBudget`].
 ///
 /// # Returns
 ///
-/// Up to `1 + 2 · M_max` solutions, where `M_max = min(multi_revs, ⌊T/π⌋)`
+/// Up to `1 + 2 · M_max` solutions, where `M_max = min(revolutions.max(), ⌊T/π⌋)`
 /// adjusted downward when the M-branch's `T_min` exceeds `tof_s`.
 ///
 /// # Errors
@@ -123,10 +159,10 @@ pub fn lambert(
     tof_s: f64,
     mu_km3_s2: f64,
     way: TransferWay,
-    multi_revs: u32,
+    revolutions: RevolutionBudget,
 ) -> Result<Vec<LambertSolution>, LambertError> {
     let geom = Geometry::from_inputs(r1_km, r2_km, tof_s, mu_km3_s2, way)?;
-    let xy_pairs = find_xy(&geom, multi_revs)?;
+    let xy_pairs = find_xy(&geom, revolutions)?;
 
     let mut out = Vec::with_capacity(xy_pairs.len());
     for (x, y, n_revs, iters) in xy_pairs {
@@ -179,7 +215,7 @@ mod tests {
 
         let r1_km = Vector3::new(r_km, 0.0, 0.0);
         let r2_km = Vector3::new(0.0, r_km, 0.0);
-        let sols = lambert(r1_km, r2_km, period_s / 4.0, mu, TransferWay::Short, 0).unwrap();
+        let sols = lambert(r1_km, r2_km, period_s / 4.0, mu, TransferWay::Short, RevolutionBudget::SingleOnly).unwrap();
         assert_eq!(sols.len(), 1);
         assert!(vec_approx(
             sols[0].v1_km_s,
@@ -203,7 +239,7 @@ mod tests {
 
         let r1_km = Vector3::new(r_km, 0.0, 0.0);
         let r2_km = Vector3::new(0.0, r_km, 0.0);
-        let sols = lambert(r1_km, r2_km, 3.0 * period_s / 4.0, mu, TransferWay::Long, 0).unwrap();
+        let sols = lambert(r1_km, r2_km, 3.0 * period_s / 4.0, mu, TransferWay::Long, RevolutionBudget::SingleOnly).unwrap();
         assert_eq!(sols.len(), 1);
         assert!(vec_approx(
             sols[0].v1_km_s,
@@ -230,7 +266,7 @@ mod tests {
         let r1_km = Vector3::new(r1_norm_km, 0.0, 0.0);
         // 1 km off-plane to dodge the colinearity edge case.
         let r2_km = Vector3::new(-r2_norm_km, 1.0, 0.0);
-        let sols = lambert(r1_km, r2_km, tof_s, mu, TransferWay::Short, 0).unwrap();
+        let sols = lambert(r1_km, r2_km, tof_s, mu, TransferWay::Short, RevolutionBudget::SingleOnly).unwrap();
         // Periapsis velocity: vis-viva at r = 1 AU on the transfer ellipse.
         let v_peri_km_s = (mu * (2.0 / r1_norm_km - 1.0 / a_km)).sqrt();
         // Tolerance ~1 m/s — the off-plane perturbation moves things slightly.
@@ -244,7 +280,7 @@ mod tests {
         let r1_km = Vector3::new(8000.0, 0.0, 0.0);
         let r2_km = Vector3::new(5600.0, 5600.0, 0.0);
         let period_s = 2.0 * PI * (8000.0_f64.powi(3) / mu).sqrt();
-        let sols = lambert(r1_km, r2_km, 5.0 * period_s, mu, TransferWay::Short, 3).unwrap();
+        let sols = lambert(r1_km, r2_km, 5.0 * period_s, mu, TransferWay::Short, RevolutionBudget::up_to(3)).unwrap();
         assert!(sols.len() >= 3, "got {} solutions", sols.len());
         for s in &sols {
             let r1n = r1_km.norm();
@@ -261,7 +297,7 @@ mod tests {
         let r1_km = Vector3::new(10_500.0, 1400.0, 700.0);
         let r2_km = Vector3::new(-2800.0, 9100.0, -1400.0);
         let tof_s = 4500.0;
-        let sols = lambert(r1_km, r2_km, tof_s, mu, TransferWay::Short, 0).unwrap();
+        let sols = lambert(r1_km, r2_km, tof_s, mu, TransferWay::Short, RevolutionBudget::SingleOnly).unwrap();
         let v1_km_s = sols[0].v1_km_s;
         let r2_prop_km = kepler_propagate(r1_km, v1_km_s, tof_s, mu);
         let err_km = (r2_prop_km - r2_km).norm();
@@ -272,7 +308,7 @@ mod tests {
     fn errors_on_non_positive_tof() {
         let r1_km = Vector3::new(7000.0, 0.0, 0.0);
         let r2_km = Vector3::new(0.0, 7000.0, 0.0);
-        let err = lambert(r1_km, r2_km, 0.0, MU_EARTH_KM3_S2, TransferWay::Short, 0).unwrap_err();
+        let err = lambert(r1_km, r2_km, 0.0, MU_EARTH_KM3_S2, TransferWay::Short, RevolutionBudget::SingleOnly).unwrap_err();
         assert!(matches!(err, LambertError::NonPositiveTimeOfFlight { tof_s } if tof_s == 0.0));
     }
 
@@ -280,7 +316,7 @@ mod tests {
     fn errors_on_zero_position_vector() {
         let r1_km = Vector3::zeros();
         let r2_km = Vector3::new(0.0, 7000.0, 0.0);
-        let err = lambert(r1_km, r2_km, 1000.0, MU_EARTH_KM3_S2, TransferWay::Short, 0).unwrap_err();
+        let err = lambert(r1_km, r2_km, 1000.0, MU_EARTH_KM3_S2, TransferWay::Short, RevolutionBudget::SingleOnly).unwrap_err();
         assert!(matches!(
             err,
             LambertError::DegeneratePositionVector { which: 1, .. }
@@ -291,7 +327,7 @@ mod tests {
     fn errors_on_colinear_geometry() {
         let r1_km = Vector3::new(7000.0, 0.0, 0.0);
         let r2_km = Vector3::new(14_000.0, 0.0, 0.0);
-        let err = lambert(r1_km, r2_km, 1000.0, MU_EARTH_KM3_S2, TransferWay::Short, 0).unwrap_err();
+        let err = lambert(r1_km, r2_km, 1000.0, MU_EARTH_KM3_S2, TransferWay::Short, RevolutionBudget::SingleOnly).unwrap_err();
         assert!(matches!(err, LambertError::CollinearGeometry { .. }));
     }
 
@@ -299,7 +335,7 @@ mod tests {
     fn errors_on_non_positive_mu() {
         let r1_km = Vector3::new(7000.0, 0.0, 0.0);
         let r2_km = Vector3::new(0.0, 7000.0, 0.0);
-        let err = lambert(r1_km, r2_km, 1000.0, 0.0, TransferWay::Short, 0).unwrap_err();
+        let err = lambert(r1_km, r2_km, 1000.0, 0.0, TransferWay::Short, RevolutionBudget::SingleOnly).unwrap_err();
         assert!(matches!(err, LambertError::NonPositiveMu { mu_km3_s2 } if mu_km3_s2 == 0.0));
     }
 
@@ -312,7 +348,7 @@ mod tests {
         let r1_km = Vector3::new(7000.0, 0.0, 0.0);
         let r2_km = Vector3::new(0.0, 42_000.0, 0.0);
         let tof_s = 7200.0;
-        let sols = lambert(r1_km, r2_km, tof_s, mu, TransferWay::Short, 0).unwrap();
+        let sols = lambert(r1_km, r2_km, tof_s, mu, TransferWay::Short, RevolutionBudget::SingleOnly).unwrap();
         let s = sols[0];
         assert!(
             (s.x - 1.0).abs() < 0.01,
@@ -334,7 +370,7 @@ mod tests {
         let r1_km = Vector3::new(7000.0, 0.0, 0.0);
         let r2_km = Vector3::new(0.0, 200_000.0, 0.0);
         let tof_s = 30_000.0;
-        let sols = lambert(r1_km, r2_km, tof_s, mu, TransferWay::Short, 0).unwrap();
+        let sols = lambert(r1_km, r2_km, tof_s, mu, TransferWay::Short, RevolutionBudget::SingleOnly).unwrap();
         let s = sols[0];
         assert!(s.x > 1.0, "expected hyperbolic (x > 1), got x = {}", s.x);
         let energy = 0.5 * s.v1_km_s.dot(&s.v1_km_s) - mu / r1_km.norm();
@@ -354,7 +390,7 @@ mod tests {
         let r2_km = Vector3::new(5600.0, 5600.0, 0.0);
         let period_s = 2.0 * PI * (8000.0_f64.powi(3) / mu).sqrt();
         let tof_s = 5.0 * period_s;
-        let sols = lambert(r1_km, r2_km, tof_s, mu, TransferWay::Short, 3).unwrap();
+        let sols = lambert(r1_km, r2_km, tof_s, mu, TransferWay::Short, RevolutionBudget::up_to(3)).unwrap();
 
         let multi: Vec<_> = sols.iter().filter(|s| s.n_revs > 0).collect();
         assert!(!multi.is_empty(), "no multi-rev branches found");
@@ -425,7 +461,7 @@ mod tests {
             let r2_km = rand_unit_vec(&mut rng) * rng.sample(radius);
             let tof_s = rng.sample(tof);
             let way = if rng.gen_bool(0.5) { TransferWay::Long } else { TransferWay::Short };
-            let Ok(sols) = lambert(r1_km, r2_km, tof_s, mu, way, 0) else {
+            let Ok(sols) = lambert(r1_km, r2_km, tof_s, mu, way, RevolutionBudget::SingleOnly) else {
                 continue;
             };
             lambert_ok += 1;
@@ -470,7 +506,7 @@ mod tests {
             let r1_km = rand_unit_vec(&mut rng) * rng.sample(radius);
             let r2_km = rand_unit_vec(&mut rng) * rng.sample(radius);
             let tof_s = rng.sample(tof);
-            let Ok(sols) = lambert(r1_km, r2_km, tof_s, mu, TransferWay::Short, 3) else {
+            let Ok(sols) = lambert(r1_km, r2_km, tof_s, mu, TransferWay::Short, RevolutionBudget::up_to(3)) else {
                 continue;
             };
             for s in &sols {

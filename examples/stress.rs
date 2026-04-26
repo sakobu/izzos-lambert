@@ -6,7 +6,7 @@
 //!
 //! Run with `cargo run --release --example stress`.
 
-use lambert_izzo::{lambert, TransferWay};
+use lambert_izzo::{lambert, RevolutionBudget, TransferWay};
 use nalgebra::Vector3;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
@@ -67,7 +67,7 @@ fn main() {
             let r2_km = rand_unit_vec(&mut rng) * rng.sample(radius);
             let tof_s = rng.sample(tof);
             let way = if rng.gen_bool(0.5) { TransferWay::Long } else { TransferWay::Short };
-            match lambert(r1_km, r2_km, tof_s, mu, way, 0) {
+            match lambert(r1_km, r2_km, tof_s, mu, way, RevolutionBudget::SingleOnly) {
                 Ok(sols) => {
                     let s = sols[0];
                     iters_hist[s.iters as usize] += 1; // u32 → usize: always safe (usize ≥ 32 bits)
@@ -115,7 +115,7 @@ fn main() {
             let r1_km = rand_unit_vec(&mut rng) * rng.sample(radius);
             let r2_km = rand_unit_vec(&mut rng) * rng.sample(radius);
             let tof_s = rng.sample(tof);
-            match lambert(r1_km, r2_km, tof_s, mu, TransferWay::Short, 5) {
+            match lambert(r1_km, r2_km, tof_s, mu, TransferWay::Short, RevolutionBudget::up_to(5)) {
                 Ok(sols) => {
                     for s in sols.iter().filter(|s| s.n_revs > 0) {
                         iters_hist[s.iters as usize] += 1; // u32 → usize: always safe (usize ≥ 32 bits)

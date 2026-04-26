@@ -35,7 +35,7 @@ frame info.
 ## Usage
 
 ```rust
-use lambert_izzo::{lambert, TransferWay};
+use lambert_izzo::{lambert, RevolutionBudget, TransferWay};
 use nalgebra::Vector3;
 
 // LEO → MEO Hohmann transfer.
@@ -45,7 +45,10 @@ let r2_km = Vector3::new(-12_000.0, 1.0, 0.0); // 1 km off-axis avoids colineari
 let a_km = (7000.0 + 12_000.0) / 2.0;
 let tof_s = std::f64::consts::PI * (a_km.powi(3) / mu_km3_s2).sqrt();
 
-let solutions = lambert(r1_km, r2_km, tof_s, mu_km3_s2, TransferWay::Short, 0).unwrap();
+let solutions = lambert(
+    r1_km, r2_km, tof_s, mu_km3_s2,
+    TransferWay::Short, RevolutionBudget::SingleOnly,
+).unwrap();
 let sol = &solutions[0];
 println!("v1 = {} km/s", sol.v1_km_s);
 println!("v2 = {} km/s", sol.v2_km_s);
@@ -61,18 +64,18 @@ pub fn lambert(
     tof_s: f64,             // time of flight (s), > 0
     mu_km3_s2: f64,         // gravitational parameter (km³/s²), > 0
     way: TransferWay,       // Short or Long way around the transfer plane
-    multi_revs: u32,        // max revolution count (0 = single-rev only)
+    revolutions: RevolutionBudget, // SingleOnly or UpTo(NonZero<u32>)
 ) -> Result<Vec<LambertSolution>, LambertError>
 ```
 
-For `multi_revs = N`, you get up to `1 + 2 · N_max` solutions, where
-`N_max = min(multi_revs, ⌊T/π⌋)`. Single-rev is always index 0; multi-rev
-branches (if any) follow as `(long-period, short-period)` pairs.
+For `revolutions = RevolutionBudget::up_to(N)`, you get up to `1 + 2 · N_max`
+solutions, where `N_max = min(N, ⌊T/π⌋)`. Single-rev is always index 0;
+multi-rev branches (if any) follow as `(long-period, short-period)` pairs.
 
 `LambertError` is a `thiserror` enum with structured fields:
 
 ```rust
-match lambert(r1_km, r2_km, tof_s, mu_km3_s2, TransferWay::Short, 0) {
+match lambert(r1_km, r2_km, tof_s, mu_km3_s2, TransferWay::Short, RevolutionBudget::SingleOnly) {
     Ok(sols) => /* … */,
     Err(LambertError::NonPositiveTimeOfFlight { tof_s })       => /* … */,
     Err(LambertError::NonPositiveMu { mu_km3_s2 })             => /* … */,

@@ -20,7 +20,7 @@ pub(crate) type XYTuple = (f64, f64, u32, u32);
 /// budget.
 ///
 /// Returns single-rev first (always exists), then `(long-period, short-period)`
-/// pairs for each `M` from `1` up to `min(multi_revs, ⌊T/π⌋)`.
+/// pairs for each `M` from `1` up to `min(revolutions.max(), ⌊T/π⌋)`.
 ///
 /// # Errors
 ///
@@ -29,7 +29,7 @@ pub(crate) type XYTuple = (f64, f64, u32, u32);
 #[allow(clippy::similar_names)] // xl/xr, yl/yr, il/ir, x0l/x0r are long/short-period multi-rev branch pairs — Izzo §3.
 pub(crate) fn find_xy(
     geom: &Geometry,
-    multi_revs: u32,
+    revolutions: crate::RevolutionBudget,
 ) -> Result<Vec<XYTuple>, LambertError> {
     let lambda = geom.lambda;
     let big_t = geom.big_t;
@@ -51,7 +51,7 @@ pub(crate) fn find_xy(
     // only fires on the boundary branch where big_t lies below the analytic
     // minimum T(x=0, M) = t00 + M·π — at most one Halley call per call to
     // `find_xy`.
-    for m in 1..=multi_revs {
+    for m in 1..=revolutions.max() {
         let m_pi = f64::from(m) * PI;
 
         // Quick reject: T_min(M) ≥ M·π always, so big_t < M·π ⇒ infeasible.
