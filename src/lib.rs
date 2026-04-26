@@ -174,22 +174,28 @@ pub fn lambert(
     let xy_pairs = find_xy(&geom, revolutions)?;
 
     let mut out = Vec::with_capacity(xy_pairs.len());
-    for (x, y, n_revs, iters) in xy_pairs {
-        let v_r1 =
-            geom.gamma * ((geom.lambda * y - x) - geom.rho * (geom.lambda * y + x)) / geom.r1n;
-        let v_r2 =
-            -geom.gamma * ((geom.lambda * y - x) + geom.rho * (geom.lambda * y + x)) / geom.r2n;
-        let v_t1 = geom.gamma * geom.sigma * (y + geom.lambda * x) / geom.r1n;
-        let v_t2 = geom.gamma * geom.sigma * (y + geom.lambda * x) / geom.r2n;
+    for root in xy_pairs {
+        // Velocity reconstruction (Izzo Algorithm 1).
+        // Paper-named locals; `lambda*y ± x` are the elliptic-anomaly combos
+        // that appear repeatedly in the radial/tangential decomposition.
+        let lambda_y_minus_x = geom.lambda * root.y - root.x;
+        let lambda_y_plus_x = geom.lambda * root.y + root.x;
+        let tangential_num = geom.gamma * geom.sigma * (root.y + geom.lambda * root.x);
+
+        let v_r1 = geom.gamma * (lambda_y_minus_x - geom.rho * lambda_y_plus_x) / geom.r1n;
+        let v_r2 = -geom.gamma * (lambda_y_minus_x + geom.rho * lambda_y_plus_x) / geom.r2n;
+        let v_t1 = tangential_num / geom.r1n;
+        let v_t2 = tangential_num / geom.r2n;
+
         let v1_km_s = geom.ir1 * v_r1 + geom.it1 * v_t1;
         let v2_km_s = geom.ir2 * v_r2 + geom.it2 * v_t2;
         out.push(LambertSolution {
             v1_km_s,
             v2_km_s,
-            n_revs,
+            n_revs: root.n_revs,
             diagnostics: SolverDiagnostics {
-                iters,
-                lancaster_blanchard_x: x,
+                iters: root.iters,
+                lancaster_blanchard_x: root.x,
             },
         });
     }

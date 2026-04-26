@@ -60,7 +60,7 @@ pub(crate) fn kepler_propagate(
 }
 
 /// Stumpff functions `c2(ψ)`, `c3(ψ)` with a small-ψ series expansion.
-pub(crate) fn stumpff(psi: f64) -> (f64, f64) {
+fn stumpff(psi: f64) -> (f64, f64) {
     if psi > 1e-6 {
         let s = psi.sqrt();
         ((1.0 - s.cos()) / psi, (s - s.sin()) / s.powi(3))

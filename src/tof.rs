@@ -27,9 +27,13 @@ pub(crate) fn x_to_tof(x: f64, lambda: f64, m: u32) -> f64 {
 }
 
 /// `y = sqrt(1 − λ²(1 − x²))` (Izzo Eq. 7).
+///
+/// The `.max(0.0)` guards against `f64` round-off producing a tiny
+/// negative argument when `|λ| → 1` and `x` is just past `1`. Same
+/// idiom used in [`crate::geometry::Geometry::from_inputs`] for `λ` itself.
 #[inline]
 pub(crate) fn compute_y(x: f64, lambda: f64) -> f64 {
-    (1.0 - lambda * lambda * (1.0 - x * x)).sqrt()
+    (1.0 - lambda * lambda * (1.0 - x * x)).max(0.0).sqrt()
 }
 
 /// Lagrange formulation (Izzo Eq. 9). Stable away from the parabolic

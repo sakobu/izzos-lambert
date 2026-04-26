@@ -13,8 +13,18 @@ use crate::error::LambertError;
 use crate::geometry::Geometry;
 use crate::tof::{compute_y, tof_derivatives, x_to_tof};
 
-/// One converged root: `(x, y, n_revs, iters)`.
-pub(crate) type XYTuple = (f64, f64, u32, u32);
+/// One converged Householder root for a given branch.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Root {
+    /// Lancaster–Blanchard `x` (Izzo's free parameter, dimensionless).
+    pub x: f64,
+    /// Companion variable `y = sqrt(1 − λ²(1 − x²))` (Izzo Eq. 7).
+    pub y: f64,
+    /// Branch revolution count: `0` = single-rev, `≥ 1` = multi-rev.
+    pub n_revs: u32,
+    /// Householder iterations consumed to converge.
+    pub iters: u32,
+}
 
 /// Find every reachable `(x, y)` root for the given geometry and revolution
 /// budget.
@@ -30,7 +40,7 @@ pub(crate) type XYTuple = (f64, f64, u32, u32);
 pub(crate) fn find_xy(
     geom: &Geometry,
     revolutions: crate::RevolutionBudget,
-) -> Result<Vec<XYTuple>, LambertError> {
+) -> Result<Vec<Root>, LambertError> {
     let lambda = geom.lambda;
     let big_t = geom.big_t;
     debug_assert!(lambda.abs() < 1.0);
@@ -43,7 +53,7 @@ pub(crate) fn find_xy(
     let x0 = initial_guess_single_rev(big_t, t00, t1, lambda);
     let (x, iters) = householder(x0, big_t, lambda, 0)?;
     let y = compute_y(x, lambda);
-    let mut out = vec![(x, y, 0_u32, iters)];
+    let mut out = vec![Root { x, y, n_revs: 0, iters }];
 
     // Multi-rev branches. Iterate upward from M = 1; stop at the first
     // infeasible branch. T_min(M) is monotonically increasing in M, so once
@@ -74,8 +84,8 @@ pub(crate) fn find_xy(
         let yl = compute_y(xl, lambda);
         let (xr, ir) = householder(x0r, big_t, lambda, m)?;
         let yr = compute_y(xr, lambda);
-        out.push((xl, yl, m, il));
-        out.push((xr, yr, m, ir));
+        out.push(Root { x: xl, y: yl, n_revs: m, iters: il });
+        out.push(Root { x: xr, y: yr, n_revs: m, iters: ir });
     }
     Ok(out)
 }
