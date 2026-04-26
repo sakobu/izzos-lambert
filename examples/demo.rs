@@ -20,7 +20,7 @@ fn main() {
     for s in lambert(r1_km, r2_km, tof_s, MU_EARTH_KM3_S2, TransferWay::Short, RevolutionBudget::SingleOnly).unwrap() {
         println!(
             "  M={} iters={} x={:+.6}\n    v1_km_s = [{:+.6}, {:+.6}, {:+.6}]\n    v2_km_s = [{:+.6}, {:+.6}, {:+.6}]\n    |v1|={:.4} km/s  |v2|={:.4} km/s",
-            s.n_revs, s.iters, s.x,
+            s.n_revs, s.diagnostics.iters, s.diagnostics.lancaster_blanchard_x,
             s.v1_km_s.x, s.v1_km_s.y, s.v1_km_s.z,
             s.v2_km_s.x, s.v2_km_s.y, s.v2_km_s.z,
             s.v1_km_s.norm(), s.v2_km_s.norm(),
@@ -32,7 +32,7 @@ fn main() {
     for s in lambert(r1_km, r2_km, tof_s, MU_EARTH_KM3_S2, TransferWay::Long, RevolutionBudget::SingleOnly).unwrap() {
         println!(
             "  M={} iters={} x={:+.6}  |v1|={:.4} km/s  |v2|={:.4} km/s",
-            s.n_revs, s.iters, s.x, s.v1_km_s.norm(), s.v2_km_s.norm(),
+            s.n_revs, s.diagnostics.iters, s.diagnostics.lancaster_blanchard_x, s.v1_km_s.norm(), s.v2_km_s.norm(),
         );
     }
 
@@ -45,7 +45,7 @@ fn main() {
     for s in lambert(r1_km, r2_km, tof_s, MU_SUN_KM3_S2, TransferWay::Short, RevolutionBudget::SingleOnly).unwrap() {
         println!(
             "  M={} iters={} x={:+.6}  |v1|={:.4} km/s  |v2|={:.4} km/s  (tof = {:.2} days)",
-            s.n_revs, s.iters, s.x, s.v1_km_s.norm(), s.v2_km_s.norm(),
+            s.n_revs, s.diagnostics.iters, s.diagnostics.lancaster_blanchard_x, s.v1_km_s.norm(), s.v2_km_s.norm(),
             tof_s / 86400.0,
         );
     }
@@ -59,7 +59,7 @@ fn main() {
     for s in lambert(r1_km, r2_km, tof_s, MU_EARTH_KM3_S2, TransferWay::Short, RevolutionBudget::up_to(3)).unwrap() {
         println!(
             "  M={} iters={} x={:+.6}  |v1|={:.4} km/s  |v2|={:.4} km/s",
-            s.n_revs, s.iters, s.x, s.v1_km_s.norm(), s.v2_km_s.norm(),
+            s.n_revs, s.diagnostics.iters, s.diagnostics.lancaster_blanchard_x, s.v1_km_s.norm(), s.v2_km_s.norm(),
         );
     }
 }

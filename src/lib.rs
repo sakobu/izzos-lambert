@@ -107,6 +107,18 @@ pub use error::LambertError;
 use geometry::Geometry;
 use root_finding::find_xy;
 
+/// Diagnostic data from one Householder solve. Useful for debugging or
+/// distinguishing multi-rev branches; not part of the trajectory answer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SolverDiagnostics {
+    /// Householder iterations used to converge.
+    pub iters: u32,
+    /// Final value of Izzo's free parameter (Lancaster–Blanchard variable),
+    /// dimensionless. For a given `M`, the long-period branch has the smaller
+    /// value, the short-period branch the larger.
+    pub lancaster_blanchard_x: f64,
+}
+
 /// One Lambert transfer.
 ///
 /// For multi-rev problems, multiple solutions exist per `M`; the returned
@@ -120,11 +132,8 @@ pub struct LambertSolution {
     pub v2_km_s: Vector3<f64>,
     /// Number of complete revolutions (`0` for direct transfer).
     pub n_revs: u32,
-    /// Householder iterations used to converge.
-    pub iters: u32,
-    /// Final value of Izzo's free parameter `x` (Lancaster–Blanchard
-    /// variable, dimensionless).
-    pub x: f64,
+    /// Solver diagnostics (iteration count + Lancaster–Blanchard `x`).
+    pub diagnostics: SolverDiagnostics,
 }
 
 /// Solve Lambert's boundary-value problem.
@@ -178,8 +187,10 @@ pub fn lambert(
             v1_km_s,
             v2_km_s,
             n_revs,
-            iters,
-            x,
+            diagnostics: SolverDiagnostics {
+                iters,
+                lancaster_blanchard_x: x,
+            },
         });
     }
     Ok(out)
@@ -351,9 +362,9 @@ mod tests {
         let sols = lambert(r1_km, r2_km, tof_s, mu, TransferWay::Short, RevolutionBudget::SingleOnly).unwrap();
         let s = sols[0];
         assert!(
-            (s.x - 1.0).abs() < 0.01,
+            (s.diagnostics.lancaster_blanchard_x - 1.0).abs() < 0.01,
             "x = {} not in Battin band [0.99, 1.01]",
-            s.x
+            s.diagnostics.lancaster_blanchard_x
         );
         let r2_prop = kepler_propagate(r1_km, s.v1_km_s, tof_s, mu);
         let err_km = (r2_prop - r2_km).norm();
@@ -372,7 +383,11 @@ mod tests {
         let tof_s = 30_000.0;
         let sols = lambert(r1_km, r2_km, tof_s, mu, TransferWay::Short, RevolutionBudget::SingleOnly).unwrap();
         let s = sols[0];
-        assert!(s.x > 1.0, "expected hyperbolic (x > 1), got x = {}", s.x);
+        assert!(
+            s.diagnostics.lancaster_blanchard_x > 1.0,
+            "expected hyperbolic (x > 1), got x = {}",
+            s.diagnostics.lancaster_blanchard_x
+        );
         let energy = 0.5 * s.v1_km_s.dot(&s.v1_km_s) - mu / r1_km.norm();
         assert!(energy > 0.0, "expected positive specific energy, got {energy}");
         let r2_prop = kepler_propagate(r1_km, s.v1_km_s, tof_s, mu);
@@ -408,11 +423,12 @@ mod tests {
             );
             // find_xy pushes (xl, xr) per M — long-period first, short-period second.
             assert!(
-                pair[0].x < pair[1].x,
+                pair[0].diagnostics.lancaster_blanchard_x
+                    < pair[1].diagnostics.lancaster_blanchard_x,
                 "M = {}: long-period x ({}) >= short-period x ({})",
                 pair[0].n_revs,
-                pair[0].x,
-                pair[1].x
+                pair[0].diagnostics.lancaster_blanchard_x,
+                pair[1].diagnostics.lancaster_blanchard_x
             );
             for s in pair {
                 let r2_prop = kepler_propagate(r1_km, s.v1_km_s, tof_s, mu);

@@ -70,8 +70,8 @@ fn main() {
             match lambert(r1_km, r2_km, tof_s, mu, way, RevolutionBudget::SingleOnly) {
                 Ok(sols) => {
                     let s = sols[0];
-                    iters_hist[s.iters as usize] += 1; // u32 → usize: always safe (usize ≥ 32 bits)
-                    total_iters += s.iters;
+                    iters_hist[s.diagnostics.iters as usize] += 1; // u32 → usize: always safe (usize ≥ 32 bits)
+                    total_iters += s.diagnostics.iters;
                     let (e_rel, h_rel) =
                         check_conservation(r1_km, s.v1_km_s, r2_km, s.v2_km_s, mu);
                     if e_rel.is_finite() {
@@ -118,8 +118,8 @@ fn main() {
             match lambert(r1_km, r2_km, tof_s, mu, TransferWay::Short, RevolutionBudget::up_to(5)) {
                 Ok(sols) => {
                     for s in sols.iter().filter(|s| s.n_revs > 0) {
-                        iters_hist[s.iters as usize] += 1; // u32 → usize: always safe (usize ≥ 32 bits)
-                        total_iters += s.iters;
+                        iters_hist[s.diagnostics.iters as usize] += 1; // u32 → usize: always safe (usize ≥ 32 bits)
+                        total_iters += s.diagnostics.iters;
                         let (e_rel, h_rel) =
                             check_conservation(r1_km, s.v1_km_s, r2_km, s.v2_km_s, mu);
                         if e_rel.is_finite() {

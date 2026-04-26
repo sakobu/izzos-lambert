@@ -52,7 +52,7 @@ let solutions = lambert(
 let sol = &solutions[0];
 println!("v1 = {} km/s", sol.v1_km_s);
 println!("v2 = {} km/s", sol.v2_km_s);
-println!("converged in {} iterations", sol.iters);
+println!("converged in {} iterations", sol.diagnostics.iters);
 ```
 
 The signature:
