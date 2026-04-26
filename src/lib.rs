@@ -7,7 +7,7 @@
 //!
 //! # Units
 //!
-//! Public inputs and outputs follow the SI conventions in `CLAUDE.md`:
+//! Public inputs and outputs follow these SI suffix conventions:
 //!
 //! | Quantity                  | Suffix     | Unit       |
 //! |---------------------------|------------|------------|
