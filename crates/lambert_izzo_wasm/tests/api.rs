@@ -13,23 +13,12 @@ fn single_rev_request_returns_js_friendly_vectors() {
 
     let response = solve_lambert_request(request).unwrap();
 
-    assert_eq!(response.solutions.len(), 1);
-    let solution = &response.solutions[0];
-    assert_eq!(solution.n_revs, 0);
-    assert!(
-        solution
-            .v1_km_s
-            .iter()
-            .all(|component| component.is_finite())
-    );
-    assert!(
-        solution
-            .v2_km_s
-            .iter()
-            .all(|component| component.is_finite())
-    );
-    assert!(solution.diagnostics.iters > 0);
-    assert!(solution.diagnostics.x.is_finite());
+    assert!(response.multi.is_empty());
+    let single = response.single;
+    assert!(single.v1_km_s.iter().all(|component| component.is_finite()));
+    assert!(single.v2_km_s.iter().all(|component| component.is_finite()));
+    assert!(single.diagnostics.iters > 0);
+    assert!(single.diagnostics.x.is_finite());
 }
 
 #[test]

@@ -4,10 +4,9 @@
 //! root-finding and velocity-reconstruction stages — eliminates re-derivation
 //! drift across modules.
 
-use nalgebra::Vector3;
-
 use crate::constants::{COLINEARITY_TOL, MIN_POSITION_NORM_KM};
 use crate::error::LambertError;
+use crate::vec3::{self, Vec3};
 
 /// Pre-computed geometry for a Lambert boundary problem.
 ///
@@ -34,13 +33,13 @@ pub(crate) struct Geometry {
     /// `|r2|`.
     pub r2n: f64,
     /// Unit vector along `r1`.
-    pub ir1: Vector3<f64>,
+    pub ir1: Vec3,
     /// Unit vector along `r2`.
-    pub ir2: Vector3<f64>,
+    pub ir2: Vec3,
     /// In-plane tangent at `r1` (sign-corrected for long-way transfers).
-    pub it1: Vector3<f64>,
+    pub it1: Vec3,
     /// In-plane tangent at `r2` (sign-corrected for long-way transfers).
-    pub it2: Vector3<f64>,
+    pub it2: Vec3,
 }
 
 impl Geometry {
@@ -59,8 +58,8 @@ impl Geometry {
     ///   below [`COLINEARITY_TOL`].
     #[allow(clippy::similar_names)] // ir1/ir2 are radial unit vectors, it1/it2 tangential — Izzo Eq. 5–7.
     pub(crate) fn from_inputs(
-        r1_km: Vector3<f64>,
-        r2_km: Vector3<f64>,
+        r1_km: Vec3,
+        r2_km: Vec3,
         tof_s: f64,
         mu_km3_s2: f64,
         way: crate::TransferWay,
@@ -77,8 +76,8 @@ impl Geometry {
             return Err(LambertError::NonPositiveMu { mu_km3_s2 });
         }
 
-        let r1n = r1_km.norm();
-        let r2n = r2_km.norm();
+        let r1n = vec3::norm(r1_km);
+        let r2n = vec3::norm(r2_km);
         if r1n < MIN_POSITION_NORM_KM {
             return Err(LambertError::DegeneratePositionVector {
                 which: 1,
@@ -92,15 +91,15 @@ impl Geometry {
             });
         }
 
-        let chord = r2_km - r1_km;
-        let c = chord.norm();
+        let chord = vec3::sub(r2_km, r1_km);
+        let c = vec3::norm(chord);
         let s = 0.5 * (r1n + r2n + c);
 
-        let ir1 = r1_km / r1n;
-        let ir2 = r2_km / r2n;
-        let ih_raw = ir1.cross(&ir2);
-        let sin_angle = ih_raw.norm();
-        let Some(ih) = ih_raw.try_normalize(COLINEARITY_TOL) else {
+        let ir1 = vec3::scale(r1_km, 1.0 / r1n);
+        let ir2 = vec3::scale(r2_km, 1.0 / r2n);
+        let ih_raw = vec3::cross(ir1, ir2);
+        let sin_angle = vec3::norm(ih_raw);
+        let Some(ih) = vec3::try_normalize(ih_raw, COLINEARITY_TOL) else {
             return Err(LambertError::CollinearGeometry { sin_angle });
         };
 
@@ -110,12 +109,12 @@ impl Geometry {
         let mut lambda = (1.0 - c / s).max(0.0).sqrt();
         let (it1_raw, it2_raw) = if matches!(way, crate::TransferWay::Long) {
             lambda = -lambda;
-            (ir1.cross(&ih), ir2.cross(&ih))
+            (vec3::cross(ir1, ih), vec3::cross(ir2, ih))
         } else {
-            (ih.cross(&ir1), ih.cross(&ir2))
+            (vec3::cross(ih, ir1), vec3::cross(ih, ir2))
         };
-        let it1 = it1_raw.normalize();
-        let it2 = it2_raw.normalize();
+        let it1 = vec3::normalize(it1_raw);
+        let it2 = vec3::normalize(it2_raw);
 
         let big_t = (2.0 * mu_km3_s2 / (s * s * s)).sqrt() * tof_s;
         let gamma = (mu_km3_s2 * s / 2.0).sqrt();
@@ -146,10 +145,10 @@ fn validate_finite_scalar(parameter: &'static str, value: f64) -> Result<(), Lam
     }
 }
 
-fn validate_finite_vector(prefix: &'static str, value: Vector3<f64>) -> Result<(), LambertError> {
-    validate_finite_scalar(component_name(prefix, "x"), value.x)?;
-    validate_finite_scalar(component_name(prefix, "y"), value.y)?;
-    validate_finite_scalar(component_name(prefix, "z"), value.z)
+fn validate_finite_vector(prefix: &'static str, value: Vec3) -> Result<(), LambertError> {
+    validate_finite_scalar(component_name(prefix, "x"), value[0])?;
+    validate_finite_scalar(component_name(prefix, "y"), value[1])?;
+    validate_finite_scalar(component_name(prefix, "z"), value[2])
 }
 
 fn component_name(prefix: &'static str, component: &'static str) -> &'static str {

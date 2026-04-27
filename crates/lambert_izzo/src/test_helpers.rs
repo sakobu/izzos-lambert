@@ -6,7 +6,7 @@
 //! Inputs follow the same SI convention as the public Lambert API
 //! (`r0_km`, `v0_km_s`, `dt_s`, `mu_km3_s2`).
 
-use nalgebra::Vector3;
+use crate::vec3::{self, Vec3};
 
 /// Newton-iteration cap on the universal Kepler equation. Well above the
 /// `<30` typical convergence count; pathological geometries hit it and bail
@@ -39,20 +39,15 @@ const STUMPFF_SERIES_THRESHOLD: f64 = 1e-6;
 /// Returns a NaN-vector if the universal-variable Newton iteration diverges
 /// (e.g. on near-parabolic geometries where the simple `χ₀ = √μ·dt·|α|`
 /// initial guess is too poor to recover). Callers in statistical tests
-/// filter divergent trials via `Vector3::is_finite()` semantics.
-pub(crate) fn kepler_propagate(
-    r0_km: Vector3<f64>,
-    v0_km_s: Vector3<f64>,
-    dt_s: f64,
-    mu_km3_s2: f64,
-) -> Vector3<f64> {
-    let r0n = r0_km.norm();
-    let v0n2 = v0_km_s.norm_squared();
+/// filter divergent trials by checking componentwise finiteness.
+pub(crate) fn kepler_propagate(r0_km: Vec3, v0_km_s: Vec3, dt_s: f64, mu_km3_s2: f64) -> Vec3 {
+    let r0n = vec3::norm(r0_km);
+    let v0n2 = vec3::norm_squared(v0_km_s);
     let alpha = 2.0 / r0n - v0n2 / mu_km3_s2; // 1/a
     let sqrt_mu = mu_km3_s2.sqrt();
-    let sigma0 = r0_km.dot(&v0_km_s) / sqrt_mu;
+    let sigma0 = vec3::dot(r0_km, v0_km_s) / sqrt_mu;
     let mut chi = sqrt_mu * dt_s * alpha.abs(); // initial guess
-    let nan_vec = Vector3::new(f64::NAN, f64::NAN, f64::NAN);
+    let nan_vec: Vec3 = [f64::NAN, f64::NAN, f64::NAN];
     let mut converged = false;
     for _ in 0..KEPLER_MAX_ITERS {
         let psi = alpha * chi * chi;
@@ -80,7 +75,7 @@ pub(crate) fn kepler_propagate(
     let (c2, c3) = stumpff(psi);
     let f = 1.0 - chi * chi / r0n * c2;
     let g = dt_s - chi * chi * chi / sqrt_mu * c3;
-    r0_km * f + v0_km_s * g
+    vec3::add(vec3::scale(r0_km, f), vec3::scale(v0_km_s, g))
 }
 
 /// Stumpff functions `c2(ψ)`, `c3(ψ)` with a small-ψ series expansion.

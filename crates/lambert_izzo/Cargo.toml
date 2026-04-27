@@ -1,6 +1,6 @@
 [package]
 name = "lambert_izzo"
-version = "0.2.0"
+version = "0.3.0"
 edition.workspace = true
 rust-version.workspace = true
 description = "Izzo's revisited Lambert solver (single & multi-rev, short & long way)"
@@ -11,10 +11,12 @@ keywords = ["astrodynamics", "lambert", "orbital-mechanics", "izzo"]
 categories = ["science", "aerospace"]
 
 [dependencies]
-nalgebra.workspace = true
+arrayvec = { version = "0.7", default-features = false }
 thiserror.workspace = true
 
 [dev-dependencies]
+nalgebra = { workspace = true }
+glam = "0.29"
 rand = "0.8"
 rand_chacha = "0.3"
 rand_distr = "0.4"

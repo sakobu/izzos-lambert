@@ -10,10 +10,13 @@ Supports:
 
 - Single-revolution transfers
 - Multi-revolution transfers (long-period and short-period branches)
-- Short-way and long-way transfers (`way: TransferWay`); prograde vs retrograde
+- Short-way and long-way transfers (`TransferWay::Short` / `TransferWay::Long`,
+  or `lambert_both_ways(...)` for one call returning both); prograde vs retrograde
   is the caller's choice via the `(r1, r2)` ordering, since
   `r1 × r2` defines the resulting orbit's angular-momentum direction
+- Hyperbolic transfers on the single-rev branch
 - WASM-compatible math kernel (`cargo build --target wasm32-unknown-unknown --lib`)
+- Zero hard math-library dependency — public surface is `[f64; 3]`
 
 ## Units
 
@@ -36,12 +39,11 @@ frame info.
 
 ```rust
 use lambert_izzo::{lambert, RevolutionBudget, TransferWay};
-use nalgebra::Vector3;
 
 // LEO → MEO Hohmann transfer.
 let mu_km3_s2 = 398_600.441_8;
-let r1_km = Vector3::new(7000.0, 0.0, 0.0);
-let r2_km = Vector3::new(-12_000.0, 1.0, 0.0); // 1 km off-axis avoids colinearity
+let r1_km = [7000.0, 0.0, 0.0];
+let r2_km = [-12_000.0, 1.0, 0.0]; // 1 km off-axis avoids colinearity
 let a_km = (7000.0 + 12_000.0) / 2.0;
 let tof_s = std::f64::consts::PI * (a_km.powi(3) / mu_km3_s2).sqrt();
 
@@ -49,28 +51,64 @@ let solutions = lambert(
     r1_km, r2_km, tof_s, mu_km3_s2,
     TransferWay::Short, RevolutionBudget::SingleOnly,
 ).unwrap();
-let sol = &solutions[0];
-println!("v1 = {} km/s", sol.v1_km_s);
-println!("v2 = {} km/s", sol.v2_km_s);
-println!("converged in {} iterations", sol.diagnostics.iters);
+let v1_km_s = solutions.single.v1_km_s;
+let v2_km_s = solutions.single.v2_km_s;
 ```
 
 The signature:
 
 ```rust
 pub fn lambert(
-    r1_km: Vector3<f64>,    // initial position (km), any inertial frame
-    r2_km: Vector3<f64>,    // final position (km), same frame
+    r1_km: [f64; 3],        // initial position (km), any inertial frame
+    r2_km: [f64; 3],        // final position (km), same frame
     tof_s: f64,             // time of flight (s), > 0
     mu_km3_s2: f64,         // gravitational parameter (km³/s²), > 0
     way: TransferWay,       // Short or Long way around the transfer plane
     revolutions: RevolutionBudget, // SingleOnly or UpTo(NonZero<u32>)
-) -> Result<Vec<LambertSolution>, LambertError>
+) -> Result<LambertSolutions, LambertError>
 ```
 
-For `revolutions = RevolutionBudget::up_to(N)`, you get up to `1 + 2 · N_max`
-solutions, where `N_max = min(N, ⌊T/π⌋)`. Single-rev is always index 0;
-multi-rev branches (if any) follow as `(long-period, short-period)` pairs.
+The returned `LambertSolutions` is a typed shape — single-revolution always
+present, multi-revolution branches in `(long_period, short_period)` pairs:
+
+```rust
+pub struct LambertSolutions {
+    pub single: LambertSolution,
+    pub multi: ArrayVec<MultiRevPair, MAX_MULTI_REV_PAIRS>, // up to 32, stack-allocated
+}
+
+pub struct MultiRevPair {
+    pub n_revs: u32,
+    pub long_period: LambertSolution,
+    pub short_period: LambertSolution,
+}
+
+pub struct LambertSolution {
+    pub v1_km_s: [f64; 3],
+    pub v2_km_s: [f64; 3],
+}
+```
+
+For the iteration count and Lancaster–Blanchard `x` (useful for diagnosing
+multi-rev branches), use `solve_with_diagnostics`:
+
+```rust
+use lambert_izzo::solve_with_diagnostics;
+let (sols, diag) = solve_with_diagnostics(
+    r1_km, r2_km, tof_s, mu_km3_s2,
+    TransferWay::Short, RevolutionBudget::up_to(3),
+)?;
+println!("converged in {} iters", diag.single.iters);
+```
+
+For the porkchop-plot pattern (you want both ways), use `lambert_both_ways`:
+
+```rust
+use lambert_izzo::lambert_both_ways;
+let both = lambert_both_ways(r1_km, r2_km, tof_s, mu_km3_s2, RevolutionBudget::up_to(3))?;
+let short_v1 = both.short.single.v1_km_s;
+let long_v1 = both.long.single.v1_km_s;
+```
 
 `LambertError` is a `thiserror` enum with structured fields:
 
@@ -87,6 +125,22 @@ match lambert(r1_km, r2_km, tof_s, mu_km3_s2, TransferWay::Short, RevolutionBudg
 }
 ```
 
+### Math-library interop
+
+The crate has no hard math-library dependency. Both `nalgebra::Vector3<f64>`
+and `glam::DVec3` already convert to/from `[f64; 3]` natively, so callers
+using either library can pass and receive vectors without any feature flag:
+
+```rust
+// nalgebra:
+let r1_km: [f64; 3] = nalgebra::Vector3::new(7000.0, 0.0, 0.0).into();
+let v1_na: nalgebra::Vector3<f64> = solutions.single.v1_km_s.into();
+
+// glam:
+let r2_km = glam::DVec3::new(0.0, 7000.0, 0.0).to_array();
+let v2_glam = glam::DVec3::from_array(solutions.single.v2_km_s);
+```
+
 ## Validation
 
 The `stress` example runs 100,000 random Earth-orbit geometries each for
@@ -99,8 +153,8 @@ pair. Random ranges:
 
 | Mode       | Convergence | Avg iters | Paper avg | Max iters | Max ΔE/E | Max ΔL/L |
 | ---------- | ----------- | --------- | --------- | --------- | -------- | -------- |
-| Single-rev | 100%        | 2.083     | 2.1       | 3         | 1.18e-11 | 3.16e-12 |
-| Multi-rev  | 100%        | 2.992     | 3.3       | 6         | 2.77e-14 | 1.14e-13 |
+| Single-rev | 100%        | 2.084     | 2.1       | 3         | 8.41e-12 | 1.86e-12 |
+| Multi-rev  | 100%        | 2.992     | 3.3       | 7         | 3.00e-14 | 1.37e-13 |
 
 Iteration counts match the paper's reported figures.
 
@@ -114,14 +168,16 @@ cargo run --release --example stress
 ```
 
 Toolchain pinned via `rust-toolchain.toml` (1.88.0). Edition 2024.
-Dependencies: [`nalgebra`](https://nalgebra.org) for `Vector3<f64>` arithmetic
-and [`thiserror`](https://docs.rs/thiserror) for the error type.
+Single hard runtime dependency: [`thiserror`](https://docs.rs/thiserror) for
+the error type. [`arrayvec`](https://docs.rs/arrayvec) provides the
+stack-allocated multi-rev container.
 
 ## Implementation notes
 
 - Modular layout under `src/`:
   - `constants.rs` — every named tolerance with rationale.
   - `error.rs` — structured `LambertError` enum.
+  - `vec3.rs` — internal `[f64; 3]` helpers (dot, cross, norm, etc.).
   - `geometry.rs` — chord, semi-perimeter, λ, transfer-plane basis;
     constructed once per call.
   - `tof.rs` — three-regime TOF dispatch + analytic derivatives (Eq. 22).
@@ -138,6 +194,10 @@ and [`thiserror`](https://docs.rs/thiserror) for the error type.
   before deciding which revolution counts admit solutions.
 - Initial guesses follow Eq. 30 (single-rev) and Eq. 31 (multi-rev).
 - Velocity reconstruction follows Algorithm 1.
+- Multi-rev branches are clamped at `MAX_MULTI_REV_PAIRS = 32`. The
+  bounded `ArrayVec` return means `lambert(...)` does no heap allocation
+  on any code path (`MAX_MULTI_REV_PAIRS * sizeof(MultiRevPair)` lives
+  on the stack).
 
 ## License
 

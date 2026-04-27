@@ -3,8 +3,10 @@
 //! Drives the search from the analytic initial guesses (Izzo Eqs. 30, 31)
 //! to converged `(x, y)` pairs for every reachable revolution count.
 
+use arrayvec::ArrayVec;
 use core::f64::consts::PI;
 
+use crate::MAX_MULTI_REV_PAIRS;
 use crate::constants::{
     HALLEY_MAX_ITERS, HALLEY_TOL, HOUSEHOLDER_MAX_ITERS, HOUSEHOLDER_TOL_MULTI,
     HOUSEHOLDER_TOL_SINGLE,
@@ -20,27 +22,45 @@ pub(crate) struct Root {
     pub x: f64,
     /// Companion variable `y = sqrt(1 − λ²(1 − x²))` (Izzo Eq. 7).
     pub y: f64,
-    /// Branch revolution count: `0` = single-rev, `≥ 1` = multi-rev.
-    pub n_revs: u32,
     /// Householder iterations consumed to converge.
     pub iters: u32,
+}
+
+/// One multi-rev pair: long-period and short-period roots for a given `M`.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RootPair {
+    /// Branch revolution count (`>= 1`).
+    pub n_revs: u32,
+    /// Long-period root (smaller `x`).
+    pub long_period: Root,
+    /// Short-period root (larger `x`).
+    pub short_period: Root,
+}
+
+/// Solver output: the always-present single-rev root plus every reachable
+/// multi-rev pair, up to [`MAX_MULTI_REV_PAIRS`].
+#[derive(Debug, Clone)]
+pub(crate) struct Roots {
+    pub single: Root,
+    pub multi: ArrayVec<RootPair, MAX_MULTI_REV_PAIRS>,
 }
 
 /// Find every reachable `(x, y)` root for the given geometry and revolution
 /// budget.
 ///
-/// Returns single-rev first (always exists), then `(long-period, short-period)`
-/// pairs for each `M` from `1` up to `min(revolutions.max(), ⌊T/π⌋)`.
+/// `revolutions.max()` is clamped to [`MAX_MULTI_REV_PAIRS`] internally —
+/// callers requesting more multi-rev branches than the bounded return can
+/// hold get the truncated set rather than an error.
 ///
 /// # Errors
 ///
 /// Propagates [`LambertError::NoConvergence`] / [`LambertError::SingularDenominator`]
 /// from the underlying Householder iteration.
-#[allow(clippy::similar_names)] // xl/xr, yl/yr, il/ir, x0l/x0r are long/short-period multi-rev branch pairs — Izzo §3.
+#[allow(clippy::similar_names)] // xl/xr, il/ir, x0l/x0r are long/short-period multi-rev branch pairs — Izzo §3.
 pub(crate) fn find_xy(
     geom: &Geometry,
     revolutions: crate::RevolutionBudget,
-) -> Result<Vec<Root>, LambertError> {
+) -> Result<Roots, LambertError> {
     let lambda = geom.lambda;
     let big_t = geom.big_t;
     debug_assert!(lambda.abs() < 1.0);
@@ -52,22 +72,24 @@ pub(crate) fn find_xy(
     let t1 = (2.0 / 3.0) * (1.0 - lambda * lambda * lambda);
     let x0 = initial_guess_single_rev(big_t, t00, t1, lambda);
     let (x, iters) = householder(x0, big_t, lambda, 0)?;
-    let y = compute_y(x, lambda);
-    let mut out = Vec::new();
-    out.push(Root {
+    let single = Root {
         x,
-        y,
-        n_revs: 0,
+        y: compute_y(x, lambda),
         iters,
-    });
+    };
+
+    let mut multi: ArrayVec<RootPair, MAX_MULTI_REV_PAIRS> = ArrayVec::new();
 
     // Multi-rev branches. Iterate upward from M = 1; stop at the first
     // infeasible branch. T_min(M) is monotonically increasing in M, so once
     // a branch fails, all higher branches also fail. The Halley T_min check
     // only fires on the boundary branch where big_t lies below the analytic
     // minimum T(x=0, M) = t00 + M·π — at most one Halley call per call to
-    // `find_xy`.
-    for m in 1..=revolutions.max() {
+    // `find_xy`. Capacity-bounded; clamp at MAX_MULTI_REV_PAIRS so we never
+    // overflow the ArrayVec (callers above the cap get the truncated set).
+    let m_cap_u32 = u32::try_from(MAX_MULTI_REV_PAIRS).unwrap_or(u32::MAX);
+    let m_max = revolutions.max().min(m_cap_u32);
+    for m in 1..=m_max {
         let m_pi = f64::from(m) * PI;
 
         // Quick reject: T_min(M) ≥ M·π always, so big_t < M·π ⇒ infeasible.
@@ -87,23 +109,30 @@ pub(crate) fn find_xy(
 
         let (x0l, x0r) = initial_guess_multi_rev(big_t, m);
         let (xl, il) = householder(x0l, big_t, lambda, m)?;
-        let yl = compute_y(xl, lambda);
         let (xr, ir) = householder(x0r, big_t, lambda, m)?;
-        let yr = compute_y(xr, lambda);
-        out.push(Root {
-            x: xl,
-            y: yl,
-            n_revs: m,
-            iters: il,
-        });
-        out.push(Root {
-            x: xr,
-            y: yr,
-            n_revs: m,
-            iters: ir,
-        });
+        // Capacity is guaranteed by the m_max clamp above, but use try_push
+        // to keep the no-panic discipline. If push fails we silently stop —
+        // higher-M branches are well outside the cap and aren't expected.
+        if multi
+            .try_push(RootPair {
+                n_revs: m,
+                long_period: Root {
+                    x: xl,
+                    y: compute_y(xl, lambda),
+                    iters: il,
+                },
+                short_period: Root {
+                    x: xr,
+                    y: compute_y(xr, lambda),
+                    iters: ir,
+                },
+            })
+            .is_err()
+        {
+            break;
+        }
     }
-    Ok(out)
+    Ok(Roots { single, multi })
 }
 
 /// Single-rev initial guess (Izzo Eq. 30 + the derivative-matched

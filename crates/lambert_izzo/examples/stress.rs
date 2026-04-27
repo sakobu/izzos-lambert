@@ -6,8 +6,9 @@
 //!
 //! Run with `cargo run --release --example stress`.
 
-use lambert_izzo::{RevolutionBudget, TransferWay, lambert};
-use nalgebra::Vector3;
+use lambert_izzo::{
+    LambertSolution, RevolutionBudget, TransferWay, lambert, solve_with_diagnostics,
+};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use rand_distr::Uniform;
@@ -15,36 +16,64 @@ use rand_distr::Uniform;
 /// Earth's gravitational parameter (km³/s²).
 const MU_EARTH_KM3_S2: f64 = 398_600.441_8;
 
-fn rand_unit_vec(rng: &mut ChaCha20Rng) -> Vector3<f64> {
+#[inline]
+fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+#[inline]
+fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+#[inline]
+fn norm(a: [f64; 3]) -> f64 {
+    dot(a, a).sqrt()
+}
+
+#[inline]
+fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+fn rand_unit_vec(rng: &mut ChaCha20Rng) -> [f64; 3] {
     let axis: Uniform<f64> = Uniform::new(-1.0, 1.0);
     loop {
-        let v = Vector3::new(rng.sample(axis), rng.sample(axis), rng.sample(axis));
-        let n2 = v.norm_squared();
+        let v: [f64; 3] = [rng.sample(axis), rng.sample(axis), rng.sample(axis)];
+        let n2 = dot(v, v);
         if n2 > 0.01 && n2 < 1.0 {
-            return v / n2.sqrt();
+            let inv = 1.0 / n2.sqrt();
+            return [v[0] * inv, v[1] * inv, v[2] * inv];
         }
     }
 }
 
 fn check_conservation(
-    r1_km: Vector3<f64>,
-    v1_km_s: Vector3<f64>,
-    r2_km: Vector3<f64>,
-    v2_km_s: Vector3<f64>,
+    r1_km: [f64; 3],
+    s: LambertSolution,
+    r2_km: [f64; 3],
     mu_km3_s2: f64,
 ) -> (f64, f64) {
-    let r1n = r1_km.norm();
-    let r2n = r2_km.norm();
-    let e1 = 0.5 * v1_km_s.dot(&v1_km_s) - mu_km3_s2 / r1n;
-    let e2 = 0.5 * v2_km_s.dot(&v2_km_s) - mu_km3_s2 / r2n;
+    let r1n = norm(r1_km);
+    let r2n = norm(r2_km);
+    let e1 = 0.5 * dot(s.v1_km_s, s.v1_km_s) - mu_km3_s2 / r1n;
+    let e2 = 0.5 * dot(s.v2_km_s, s.v2_km_s) - mu_km3_s2 / r2n;
     let e_avg = 0.5 * (e1.abs() + e2.abs()).max(1e-12);
     let e_rel = (e1 - e2).abs() / e_avg;
-    let h1 = r1_km.cross(&v1_km_s);
-    let h2 = r2_km.cross(&v2_km_s);
-    let h_diff = (h1 - h2).norm();
-    let h_avg = 0.5 * (h1.norm() + h2.norm()).max(1e-12);
+    let h1 = cross(r1_km, s.v1_km_s);
+    let h2 = cross(r2_km, s.v2_km_s);
+    let h_diff = norm(sub(h1, h2));
+    let h_avg = 0.5 * (norm(h1) + norm(h2)).max(1e-12);
     let h_rel = h_diff / h_avg;
     (e_rel, h_rel)
+}
+
+fn scale(v: [f64; 3], s: f64) -> [f64; 3] {
+    [v[0] * s, v[1] * s, v[2] * s]
 }
 
 fn main() {
@@ -63,20 +92,20 @@ fn main() {
         let mut max_e_rel = 0.0_f64;
         let mut max_h_rel = 0.0_f64;
         for _ in 0..n_trials {
-            let r1_km = rand_unit_vec(&mut rng) * rng.sample(radius);
-            let r2_km = rand_unit_vec(&mut rng) * rng.sample(radius);
+            let r1_km = scale(rand_unit_vec(&mut rng), rng.sample(radius));
+            let r2_km = scale(rand_unit_vec(&mut rng), rng.sample(radius));
             let tof_s = rng.sample(tof);
             let way = if rng.gen_bool(0.5) {
                 TransferWay::Long
             } else {
                 TransferWay::Short
             };
-            match lambert(r1_km, r2_km, tof_s, mu, way, RevolutionBudget::SingleOnly) {
-                Ok(sols) => {
-                    let s = sols[0];
-                    iters_hist[s.diagnostics.iters as usize] += 1; // u32 → usize: always safe (usize ≥ 32 bits)
-                    total_iters += s.diagnostics.iters;
-                    let (e_rel, h_rel) = check_conservation(r1_km, s.v1_km_s, r2_km, s.v2_km_s, mu);
+            match solve_with_diagnostics(r1_km, r2_km, tof_s, mu, way, RevolutionBudget::SingleOnly)
+            {
+                Ok((sols, diag)) => {
+                    iters_hist[diag.single.iters as usize] += 1; // u32 → usize: always safe (usize ≥ 32 bits)
+                    total_iters += diag.single.iters;
+                    let (e_rel, h_rel) = check_conservation(r1_km, sols.single, r2_km, mu);
                     if e_rel.is_finite() {
                         max_e_rel = max_e_rel.max(e_rel);
                     }
@@ -115,10 +144,12 @@ fn main() {
         let mut max_e_rel = 0.0_f64;
         let mut max_h_rel = 0.0_f64;
         for _ in 0..n_trials {
-            let r1_km = rand_unit_vec(&mut rng) * rng.sample(radius);
-            let r2_km = rand_unit_vec(&mut rng) * rng.sample(radius);
+            let r1_km = scale(rand_unit_vec(&mut rng), rng.sample(radius));
+            let r2_km = scale(rand_unit_vec(&mut rng), rng.sample(radius));
             let tof_s = rng.sample(tof);
-            match lambert(
+            // Use bare lambert() for the trajectory; iter counts come from a
+            // parallel solve_with_diagnostics call only when needed.
+            match solve_with_diagnostics(
                 r1_km,
                 r2_km,
                 tof_s,
@@ -126,19 +157,23 @@ fn main() {
                 TransferWay::Short,
                 RevolutionBudget::up_to(5),
             ) {
-                Ok(sols) => {
-                    for s in sols.iter().filter(|s| s.n_revs > 0) {
-                        iters_hist[s.diagnostics.iters as usize] += 1; // u32 → usize: always safe (usize ≥ 32 bits)
-                        total_iters += s.diagnostics.iters;
-                        let (e_rel, h_rel) =
-                            check_conservation(r1_km, s.v1_km_s, r2_km, s.v2_km_s, mu);
-                        if e_rel.is_finite() {
-                            max_e_rel = max_e_rel.max(e_rel);
+                Ok((sols, diag)) => {
+                    for (pair, dpair) in sols.multi.iter().zip(diag.multi.iter()) {
+                        for (branch, dbranch) in [
+                            (pair.long_period, dpair.long_period),
+                            (pair.short_period, dpair.short_period),
+                        ] {
+                            iters_hist[dbranch.iters as usize] += 1; // u32 → usize: always safe
+                            total_iters += dbranch.iters;
+                            let (e_rel, h_rel) = check_conservation(r1_km, branch, r2_km, mu);
+                            if e_rel.is_finite() {
+                                max_e_rel = max_e_rel.max(e_rel);
+                            }
+                            if h_rel.is_finite() {
+                                max_h_rel = max_h_rel.max(h_rel);
+                            }
+                            total_branches += 1;
                         }
-                        if h_rel.is_finite() {
-                            max_h_rel = max_h_rel.max(h_rel);
-                        }
-                        total_branches += 1;
                     }
                 }
                 Err(_) => nonconvergence += 1,
@@ -160,4 +195,19 @@ fn main() {
             println!("  max relative ang.mom. mismatch: {max_h_rel:.2e}");
         }
     }
+
+    // Demonstrate the lambert() path produces the same trajectories without
+    // diagnostics overhead — sanity check, not a full sweep.
+    let r1_km = [7000.0, 0.0, 0.0];
+    let r2_km = [0.0, 7000.0, 0.0];
+    let tof_s = core::f64::consts::PI / 2.0 * (7000.0_f64.powi(3) / mu).sqrt();
+    let _ = lambert(
+        r1_km,
+        r2_km,
+        tof_s,
+        mu,
+        TransferWay::Short,
+        RevolutionBudget::SingleOnly,
+    )
+    .expect("trivial LEO Lambert call should succeed");
 }

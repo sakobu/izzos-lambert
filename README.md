@@ -6,22 +6,22 @@ adapter.
 ## Crates
 
 - `crates/lambert_izzo`: pure Rust solver crate. This is the canonical Rust
-  API and the crate intended for normal Rust consumers.
+  API and the crate intended for normal Rust consumers. Public surface is
+  `[f64; 3]` arrays — no hard math-library dependency.
 - `crates/lambert_izzo_wasm`: thin `wasm-bindgen` adapter that exposes
   JavaScript and TypeScript friendly request and response types.
 
-The core crate stays free of JavaScript concerns. The WASM crate owns array
-conversion, TypeScript type generation, and JavaScript error conversion.
+The core crate stays free of JavaScript concerns. The WASM crate owns
+TypeScript type generation and JavaScript error conversion.
 
 ## Rust usage
 
 ```rust
 use lambert_izzo::{lambert, RevolutionBudget, TransferWay};
-use nalgebra::Vector3;
 
 let mu_km3_s2 = 398_600.441_8;
-let r1_km = Vector3::new(7000.0, 0.0, 0.0);
-let r2_km = Vector3::new(0.0, 7000.0, 0.0);
+let r1_km = [7000.0, 0.0, 0.0];
+let r2_km = [0.0, 7000.0, 0.0];
 let tof_s = core::f64::consts::PI / 2.0 * (7000.0_f64.powi(3) / mu_km3_s2).sqrt();
 
 let solutions = lambert(
@@ -32,6 +32,7 @@ let solutions = lambert(
     TransferWay::Short,
     RevolutionBudget::SingleOnly,
 )?;
+let v1_km_s = solutions.single.v1_km_s;
 ```
 
 ## WASM usage
@@ -58,19 +59,23 @@ const response = solveLambert({
   maxRevs: 0,
 });
 
-console.log(response.solutions[0].v1KmS);
+console.log(response.single.v1KmS);
 ```
 
-The wrapper returns plain objects with array vectors:
+The wrapper returns the same shape as the Rust core (camelCased):
 
 ```ts
 {
-  solutions: [
+  single: {
+    v1KmS: [number, number, number],
+    v2KmS: [number, number, number],
+    diagnostics: { iters: number, x: number }
+  },
+  multi: [
     {
-      v1KmS: [number, number, number],
-      v2KmS: [number, number, number],
       nRevs: number,
-      diagnostics: { iters: number, x: number }
+      longPeriod:  { v1KmS, v2KmS, diagnostics },
+      shortPeriod: { v1KmS, v2KmS, diagnostics }
     }
   ]
 }

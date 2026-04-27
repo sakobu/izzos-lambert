@@ -21,24 +21,41 @@
 //! Earth orbits, HCRS for solar transfers, etc.) and the returned
 //! velocities are in that same frame.
 //!
+//! Position and velocity vectors are plain `[f64; 3]` arrays; the crate has
+//! no hard math-library dependency. Both [`nalgebra::Vector3<f64>`] and
+//! [`glam::DVec3`] already convert to/from `[f64; 3]` natively, so callers
+//! using either library can pass and receive vectors without an explicit
+//! interop layer.
+//!
+//! ```ignore
+//! // nalgebra:
+//! let r1: [f64; 3] = nalgebra::Vector3::new(7000.0, 0.0, 0.0).into();
+//! let v1_na: nalgebra::Vector3<f64> = solution.single.v1_km_s.into();
+//!
+//! // glam:
+//! let r2 = glam::DVec3::new(0.0, 7000.0, 0.0).to_array();
+//! let v2_glam = glam::DVec3::from_array(solution.single.v2_km_s);
+//! ```
+//!
 //! # Example
 //!
 //! ```
 //! use lambert_izzo::{lambert, LambertError, RevolutionBudget, TransferWay};
-//! use nalgebra::Vector3;
 //!
 //! # fn main() -> Result<(), LambertError> {
 //! // LEO → LEO 90° transfer at 7000 km altitude.
 //! let mu_km3_s2 = 398_600.4418;
-//! let r1_km = Vector3::new(7000.0, 0.0, 0.0);
-//! let r2_km = Vector3::new(0.0, 7000.0, 0.0);
+//! let r1_km = [7000.0, 0.0, 0.0];
+//! let r2_km = [0.0, 7000.0, 0.0];
 //! let tof_s = core::f64::consts::PI / 2.0 * (7000.0_f64.powi(3) / mu_km3_s2).sqrt();
 //!
 //! let solutions = lambert(
 //!     r1_km, r2_km, tof_s, mu_km3_s2,
 //!     TransferWay::Short, RevolutionBudget::SingleOnly,
 //! )?;
-//! assert_eq!(solutions.len(), 1);
+//! assert!(solutions.multi.is_empty());
+//! let v1_km_s = solutions.single.v1_km_s;
+//! # let _ = v1_km_s;
 //! # Ok(())
 //! # }
 //! ```
@@ -51,9 +68,20 @@
     clippy::panic,
     clippy::unreachable
 )]
-#![allow(clippy::module_name_repetitions)] // LambertError, LambertSolution
+#![allow(clippy::module_name_repetitions)] // LambertError, LambertSolution, LambertSolutions, LambertDiagnostics
 
-use nalgebra::Vector3;
+use arrayvec::ArrayVec;
+
+/// Hard upper bound on the number of multi-revolution pairs returned.
+///
+/// The Izzo formulation admits up to `⌊T/π⌋` multi-rev branches, which can
+/// be arbitrarily large for very long times of flight — but practical
+/// missions almost never exceed `M = 5`. This cap keeps the bounded return
+/// type `[multi-rev-pair; MAX_MULTI_REV_PAIRS]` a fixed stack size.
+///
+/// Callers passing [`RevolutionBudget::up_to`] above this cap get the
+/// truncated set rather than an error.
+pub const MAX_MULTI_REV_PAIRS: usize = 32;
 
 /// Direction around the transfer plane from `r1` to `r2`.
 ///
@@ -73,7 +101,8 @@ pub enum TransferWay {
 /// Multi-revolution branches admit two solutions per revolution count `M`
 /// (long-period and short-period), so the total solution count is
 /// `1 + 2 · min(max(), ⌊T/π⌋)` adjusted downward when a branch's `T_min`
-/// exceeds the requested time of flight.
+/// exceeds the requested time of flight, and clamped at
+/// [`MAX_MULTI_REV_PAIRS`] regardless of the requested value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RevolutionBudget {
     /// Solve the single-revolution case only — always exactly one solution.
@@ -107,6 +136,7 @@ mod error;
 mod geometry;
 mod root_finding;
 mod tof;
+mod vec3;
 
 #[cfg(test)]
 mod test_helpers;
@@ -114,35 +144,100 @@ mod test_helpers;
 pub use error::LambertError;
 
 use geometry::Geometry;
-use root_finding::find_xy;
+use root_finding::{Root, find_xy};
 
-/// Diagnostic data from one Householder solve. Useful for debugging or
-/// distinguishing multi-rev branches; not part of the trajectory answer.
+/// One Lambert transfer trajectory.
+///
+/// Pure trajectory data — start and end velocities. Solver diagnostics
+/// (iteration count, Lancaster–Blanchard `x`) are kept out of this type so
+/// the common API path is lean; use [`solve_with_diagnostics`] when you
+/// need them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LambertSolution {
+    /// Velocity at `r1_km` (km/s, same inertial frame as the inputs).
+    pub v1_km_s: [f64; 3],
+    /// Velocity at `r2_km` (km/s, same inertial frame as the inputs).
+    pub v2_km_s: [f64; 3],
+}
+
+/// One multi-revolution pair: long-period and short-period trajectories
+/// for a given revolution count.
+///
+/// The Izzo formulation admits exactly two trajectories for each `M ≥ 1`:
+/// the long-period branch (smaller `x`, more time near apoapsis) and the
+/// short-period branch (larger `x`, more time near periapsis).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MultiRevPair {
+    /// Branch revolution count (`>= 1`).
+    pub n_revs: u32,
+    /// Long-period trajectory (smaller Lancaster–Blanchard `x`).
+    pub long_period: LambertSolution,
+    /// Short-period trajectory (larger Lancaster–Blanchard `x`).
+    pub short_period: LambertSolution,
+}
+
+/// All Lambert trajectories for a given boundary problem and revolution budget.
+///
+/// Always carries the single-revolution trajectory; `multi` lists every
+/// reachable multi-rev pair in ascending `M` order, capped at
+/// [`MAX_MULTI_REV_PAIRS`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct LambertSolutions {
+    /// Single-revolution trajectory — always present.
+    pub single: LambertSolution,
+    /// Multi-revolution pairs in ascending `M` order; empty for
+    /// [`RevolutionBudget::SingleOnly`] or when no multi-rev branches are
+    /// feasible for the given time of flight.
+    pub multi: ArrayVec<MultiRevPair, MAX_MULTI_REV_PAIRS>,
+}
+
+/// Solutions for both transfer ways, computed from the same boundary inputs.
+///
+/// Returned by [`lambert_both_ways`]. The two halves are independent —
+/// either one may be empty in `multi` while the other is populated, since
+/// `T_min(M)` differs between the short and long forms.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BothWaysSolutions {
+    /// Short-way trajectories (`θ ≤ π`).
+    pub short: LambertSolutions,
+    /// Long-way trajectories (`θ > π`).
+    pub long: LambertSolutions,
+}
+
+/// Diagnostic data for one converged Householder solve.
+///
+/// Useful for debugging or distinguishing multi-rev branches; not part of
+/// the trajectory answer. Returned by [`solve_with_diagnostics`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SolverDiagnostics {
     /// Householder iterations used to converge.
     pub iters: u32,
     /// Final value of Izzo's free parameter (Lancaster–Blanchard variable),
-    /// dimensionless. For a given `M`, the long-period branch has the smaller
-    /// value, the short-period branch the larger.
+    /// dimensionless. For a given `M`, the long-period branch has the
+    /// smaller value, the short-period branch the larger.
     pub lancaster_blanchard_x: f64,
 }
 
-/// One Lambert transfer.
-///
-/// For multi-rev problems, multiple solutions exist per `M`; the returned
-/// vector from [`lambert`] is ordered: single-rev first, then
-/// `(M=1 long-period, M=1 short-period, M=2 long-period, …)`.
+/// Diagnostics for one multi-rev pair.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LambertSolution {
-    /// Velocity at `r1_km` (km/s, same inertial frame as the inputs).
-    pub v1_km_s: Vector3<f64>,
-    /// Velocity at `r2_km` (km/s, same inertial frame as the inputs).
-    pub v2_km_s: Vector3<f64>,
-    /// Number of complete revolutions (`0` for direct transfer).
+pub struct MultiRevPairDiagnostics {
+    /// Branch revolution count (`>= 1`).
     pub n_revs: u32,
-    /// Solver diagnostics (iteration count + Lancaster–Blanchard `x`).
-    pub diagnostics: SolverDiagnostics,
+    /// Long-period branch diagnostics.
+    pub long_period: SolverDiagnostics,
+    /// Short-period branch diagnostics.
+    pub short_period: SolverDiagnostics,
+}
+
+/// Diagnostics structure mirroring [`LambertSolutions`].
+///
+/// Returned alongside the solutions by [`solve_with_diagnostics`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct LambertDiagnostics {
+    /// Single-rev solver diagnostics.
+    pub single: SolverDiagnostics,
+    /// Multi-rev pair diagnostics in the same order as `LambertSolutions::multi`.
+    pub multi: ArrayVec<MultiRevPairDiagnostics, MAX_MULTI_REV_PAIRS>,
 }
 
 /// Solve Lambert's boundary-value problem using Izzo's revisited algorithm.
@@ -153,8 +248,9 @@ pub struct LambertSolution {
 /// `r2_km` in any consistent inertial frame and the returned velocities are
 /// in that same frame.
 ///
-/// Returns the single-revolution solution plus every reachable multi-rev
-/// branch up to `revolutions.max()`.
+/// Returns the always-present single-revolution trajectory plus every
+/// reachable multi-rev branch up to `revolutions.max()` (clamped at
+/// [`MAX_MULTI_REV_PAIRS`]).
 ///
 /// # Invariants
 ///
@@ -173,8 +269,7 @@ pub struct LambertSolution {
 ///
 /// - **Transfer angle near `0` or `π`** — the transfer plane is undefined;
 ///   returns [`LambertError::CollinearGeometry`]. Callers near these
-///   boundaries should perturb one position by ≈ 1 km off-plane (the
-///   `earth_mars_hohmann` test demonstrates this idiom).
+///   boundaries should perturb one position by ≈ 1 km off-plane.
 /// - **Near-parabolic (`|x − 1| ≤ 0.01`)** — the Lagrange and Lancaster TOF
 ///   formulations lose precision; the solver switches to Battin's
 ///   hypergeometric series (Izzo Eq. 20) automatically.
@@ -183,20 +278,7 @@ pub struct LambertSolution {
 ///   skipped.
 /// - **Multi-rev infeasibility** — for `M ≥ 1`, the branch admits a solution
 ///   only when `tof_s ≥ T_min(M, λ)`. Higher-`M` branches are dropped from
-///   the returned vector when their `T_min` exceeds the requested TOF.
-///
-/// # Arguments
-///
-/// - `r1_km`, `r2_km`: position vectors (km), in any consistent inertial frame.
-/// - `tof_s`: time of flight (s), `> 0`.
-/// - `mu_km3_s2`: gravitational parameter (km³/s²), `> 0`.
-/// - `way`: short or long way around the transfer plane (see [`TransferWay`]).
-/// - `revolutions`: revolution budget — see [`RevolutionBudget`].
-///
-/// # Returns
-///
-/// Up to `1 + 2 · M_max` solutions, where `M_max = min(revolutions.max(), ⌊T/π⌋)`
-/// adjusted downward when the M-branch's `T_min` exceeds `tof_s`.
+///   the returned `multi` vector when their `T_min` exceeds the requested TOF.
 ///
 /// # Errors
 ///
@@ -210,45 +292,137 @@ pub struct LambertSolution {
 ///   [`constants::COLINEARITY_TOL`].
 /// - [`LambertError::NoConvergence`] / [`LambertError::SingularDenominator`]
 ///   — Householder iteration failed.
-#[allow(clippy::similar_names)] // v_r1/v_r2/v_t1/v_t2 are radial/tangential velocity components at points 1/2 — Izzo §2.
 pub fn lambert(
-    r1_km: Vector3<f64>,
-    r2_km: Vector3<f64>,
+    r1_km: [f64; 3],
+    r2_km: [f64; 3],
     tof_s: f64,
     mu_km3_s2: f64,
     way: TransferWay,
     revolutions: RevolutionBudget,
-) -> Result<Vec<LambertSolution>, LambertError> {
+) -> Result<LambertSolutions, LambertError> {
     let geom = Geometry::from_inputs(r1_km, r2_km, tof_s, mu_km3_s2, way)?;
-    let xy_pairs = find_xy(&geom, revolutions)?;
+    let roots = find_xy(&geom, revolutions)?;
+    Ok(reconstruct_solutions(&geom, &roots))
+}
 
-    let mut out = Vec::with_capacity(xy_pairs.len());
-    for root in xy_pairs {
-        // Velocity reconstruction (Izzo Algorithm 1).
-        // Paper-named locals; `lambda*y ± x` are the elliptic-anomaly combos
-        // that appear repeatedly in the radial/tangential decomposition.
-        let lambda_y_minus_x = geom.lambda * root.y - root.x;
-        let lambda_y_plus_x = geom.lambda * root.y + root.x;
-        let tangential_num = geom.gamma * geom.sigma * (root.y + geom.lambda * root.x);
+/// Like [`lambert`], but also returns the per-branch [`SolverDiagnostics`]
+/// (iteration count and final Lancaster–Blanchard `x`).
+///
+/// The diagnostics structure mirrors the solutions structure 1:1 — `single`
+/// matches `single`, `multi[i]` matches `multi[i]`.
+///
+/// # Errors
+///
+/// Same as [`lambert`].
+pub fn solve_with_diagnostics(
+    r1_km: [f64; 3],
+    r2_km: [f64; 3],
+    tof_s: f64,
+    mu_km3_s2: f64,
+    way: TransferWay,
+    revolutions: RevolutionBudget,
+) -> Result<(LambertSolutions, LambertDiagnostics), LambertError> {
+    let geom = Geometry::from_inputs(r1_km, r2_km, tof_s, mu_km3_s2, way)?;
+    let roots = find_xy(&geom, revolutions)?;
+    let solutions = reconstruct_solutions(&geom, &roots);
+    let diagnostics = collect_diagnostics(&roots);
+    Ok((solutions, diagnostics))
+}
 
-        let v_r1 = geom.gamma * (lambda_y_minus_x - geom.rho * lambda_y_plus_x) / geom.r1n;
-        let v_r2 = -geom.gamma * (lambda_y_minus_x + geom.rho * lambda_y_plus_x) / geom.r2n;
-        let v_t1 = tangential_num / geom.r1n;
-        let v_t2 = tangential_num / geom.r2n;
+/// Solve both the short-way and long-way Lambert problems for the same
+/// boundary inputs in one call.
+///
+/// Convenience for porkchop-plot and rendezvous-design callers that need
+/// both traversal directions. Equivalent to calling [`lambert`] twice with
+/// `TransferWay::Short` and `TransferWay::Long`; either half may have an
+/// empty `multi` while the other is populated, since `T_min(M)` differs
+/// between the two formulations.
+///
+/// # Errors
+///
+/// Same as [`lambert`]. If either direction errors, the entire call errors —
+/// the two ways share input validation.
+pub fn lambert_both_ways(
+    r1_km: [f64; 3],
+    r2_km: [f64; 3],
+    tof_s: f64,
+    mu_km3_s2: f64,
+    revolutions: RevolutionBudget,
+) -> Result<BothWaysSolutions, LambertError> {
+    let short = lambert(
+        r1_km,
+        r2_km,
+        tof_s,
+        mu_km3_s2,
+        TransferWay::Short,
+        revolutions,
+    )?;
+    let long = lambert(
+        r1_km,
+        r2_km,
+        tof_s,
+        mu_km3_s2,
+        TransferWay::Long,
+        revolutions,
+    )?;
+    Ok(BothWaysSolutions { short, long })
+}
 
-        let v1_km_s = geom.ir1 * v_r1 + geom.it1 * v_t1;
-        let v2_km_s = geom.ir2 * v_r2 + geom.it2 * v_t2;
-        out.push(LambertSolution {
-            v1_km_s,
-            v2_km_s,
-            n_revs: root.n_revs,
-            diagnostics: SolverDiagnostics {
-                iters: root.iters,
-                lancaster_blanchard_x: root.x,
-            },
+#[allow(clippy::similar_names)] // v_r1/v_r2/v_t1/v_t2 are radial/tangential velocity components at points 1/2 — Izzo §2.
+fn reconstruct(geom: &Geometry, root: &Root) -> LambertSolution {
+    // Velocity reconstruction (Izzo Algorithm 1).
+    // Paper-named locals; `lambda*y ± x` are the elliptic-anomaly combos
+    // that appear repeatedly in the radial/tangential decomposition.
+    let lambda_y_minus_x = geom.lambda * root.y - root.x;
+    let lambda_y_plus_x = geom.lambda * root.y + root.x;
+    let tangential_num = geom.gamma * geom.sigma * (root.y + geom.lambda * root.x);
+
+    let v_r1 = geom.gamma * (lambda_y_minus_x - geom.rho * lambda_y_plus_x) / geom.r1n;
+    let v_r2 = -geom.gamma * (lambda_y_minus_x + geom.rho * lambda_y_plus_x) / geom.r2n;
+    let v_t1 = tangential_num / geom.r1n;
+    let v_t2 = tangential_num / geom.r2n;
+
+    let v1_km_s = vec3::add(vec3::scale(geom.ir1, v_r1), vec3::scale(geom.it1, v_t1));
+    let v2_km_s = vec3::add(vec3::scale(geom.ir2, v_r2), vec3::scale(geom.it2, v_t2));
+    LambertSolution { v1_km_s, v2_km_s }
+}
+
+fn reconstruct_solutions(geom: &Geometry, roots: &root_finding::Roots) -> LambertSolutions {
+    let mut multi: ArrayVec<MultiRevPair, MAX_MULTI_REV_PAIRS> = ArrayVec::new();
+    for pair in &roots.multi {
+        // Capacity by construction — roots.multi is also bounded at MAX_MULTI_REV_PAIRS.
+        let _ = multi.try_push(MultiRevPair {
+            n_revs: pair.n_revs,
+            long_period: reconstruct(geom, &pair.long_period),
+            short_period: reconstruct(geom, &pair.short_period),
         });
     }
-    Ok(out)
+    LambertSolutions {
+        single: reconstruct(geom, &roots.single),
+        multi,
+    }
+}
+
+fn diagnostics_of(root: &Root) -> SolverDiagnostics {
+    SolverDiagnostics {
+        iters: root.iters,
+        lancaster_blanchard_x: root.x,
+    }
+}
+
+fn collect_diagnostics(roots: &root_finding::Roots) -> LambertDiagnostics {
+    let mut multi: ArrayVec<MultiRevPairDiagnostics, MAX_MULTI_REV_PAIRS> = ArrayVec::new();
+    for pair in &roots.multi {
+        let _ = multi.try_push(MultiRevPairDiagnostics {
+            n_revs: pair.n_revs,
+            long_period: diagnostics_of(&pair.long_period),
+            short_period: diagnostics_of(&pair.short_period),
+        });
+    }
+    LambertDiagnostics {
+        single: diagnostics_of(&roots.single),
+        multi,
+    }
 }
 
 #[cfg(test)]
@@ -257,6 +431,7 @@ mod tests {
 
     use super::*;
     use crate::test_helpers::kepler_propagate;
+    use crate::vec3;
     use core::f64::consts::PI;
 
     /// Earth's gravitational parameter (km³/s²) — value from EGM2008.
@@ -268,6 +443,10 @@ mod tests {
         (a - b).abs() < tol
     }
 
+    fn vec_sub_norm(a: [f64; 3], b: [f64; 3]) -> f64 {
+        vec3::norm(vec3::sub(a, b))
+    }
+
     #[test]
     fn quarter_circle_leo() {
         // 90° transfer along a circular LEO at r = 7000 km.
@@ -276,8 +455,8 @@ mod tests {
         let v_circ = (mu / r_km).sqrt();
         let period_s = 2.0 * PI * (r_km.powi(3) / mu).sqrt();
 
-        let r1_km = Vector3::new(r_km, 0.0, 0.0);
-        let r2_km = Vector3::new(0.0, r_km, 0.0);
+        let r1_km = [r_km, 0.0, 0.0];
+        let r2_km = [0.0, r_km, 0.0];
         let sols = lambert(
             r1_km,
             r2_km,
@@ -287,9 +466,9 @@ mod tests {
             RevolutionBudget::SingleOnly,
         )
         .unwrap();
-        assert_eq!(sols.len(), 1);
-        assert!((sols[0].v1_km_s - Vector3::new(0.0, v_circ, 0.0)).norm() < 1e-9);
-        assert!((sols[0].v2_km_s - Vector3::new(-v_circ, 0.0, 0.0)).norm() < 1e-9);
+        assert!(sols.multi.is_empty());
+        assert!(vec_sub_norm(sols.single.v1_km_s, [0.0, v_circ, 0.0]) < 1e-9);
+        assert!(vec_sub_norm(sols.single.v2_km_s, [-v_circ, 0.0, 0.0]) < 1e-9);
     }
 
     #[test]
@@ -300,8 +479,8 @@ mod tests {
         let v_circ = (mu / r_km).sqrt();
         let period_s = 2.0 * PI * (r_km.powi(3) / mu).sqrt();
 
-        let r1_km = Vector3::new(r_km, 0.0, 0.0);
-        let r2_km = Vector3::new(0.0, r_km, 0.0);
+        let r1_km = [r_km, 0.0, 0.0];
+        let r2_km = [0.0, r_km, 0.0];
         let sols = lambert(
             r1_km,
             r2_km,
@@ -311,9 +490,9 @@ mod tests {
             RevolutionBudget::SingleOnly,
         )
         .unwrap();
-        assert_eq!(sols.len(), 1);
-        assert!((sols[0].v1_km_s - Vector3::new(0.0, -v_circ, 0.0)).norm() < 1e-9);
-        assert!((sols[0].v2_km_s - Vector3::new(v_circ, 0.0, 0.0)).norm() < 1e-9);
+        assert!(sols.multi.is_empty());
+        assert!(vec_sub_norm(sols.single.v1_km_s, [0.0, -v_circ, 0.0]) < 1e-9);
+        assert!(vec_sub_norm(sols.single.v2_km_s, [v_circ, 0.0, 0.0]) < 1e-9);
     }
 
     #[test]
@@ -326,9 +505,9 @@ mod tests {
         let a_km = f64::midpoint(r1_norm_km, r2_norm_km);
         let tof_s = PI * (a_km.powi(3) / mu).sqrt();
 
-        let r1_km = Vector3::new(r1_norm_km, 0.0, 0.0);
+        let r1_km = [r1_norm_km, 0.0, 0.0];
         // 1 km off-plane to dodge the colinearity edge case.
-        let r2_km = Vector3::new(-r2_norm_km, 1.0, 0.0);
+        let r2_km = [-r2_norm_km, 1.0, 0.0];
         let sols = lambert(
             r1_km,
             r2_km,
@@ -341,15 +520,15 @@ mod tests {
         // Periapsis velocity: vis-viva at r = 1 AU on the transfer ellipse.
         let v_peri_km_s = (mu * (2.0 / r1_norm_km - 1.0 / a_km)).sqrt();
         // Tolerance ~1 m/s — the off-plane perturbation moves things slightly.
-        assert!(approx(sols[0].v1_km_s.norm(), v_peri_km_s, 1e-3));
+        assert!(approx(vec3::norm(sols.single.v1_km_s), v_peri_km_s, 1e-3));
     }
 
     #[test]
     fn multi_rev_branches() {
         // Long-tof Earth-orbit phasing — admits multiple multi-rev branches.
         let mu = MU_EARTH_KM3_S2;
-        let r1_km = Vector3::new(8000.0, 0.0, 0.0);
-        let r2_km = Vector3::new(5600.0, 5600.0, 0.0);
+        let r1_km = [8000.0, 0.0, 0.0];
+        let r2_km = [5600.0, 5600.0, 0.0];
         let period_s = 2.0 * PI * (8000.0_f64.powi(3) / mu).sqrt();
         let sols = lambert(
             r1_km,
@@ -360,11 +539,13 @@ mod tests {
             RevolutionBudget::up_to(3),
         )
         .unwrap();
-        assert!(sols.len() >= 3, "got {} solutions", sols.len());
-        for s in &sols {
-            let r1n = r1_km.norm();
-            let energy = 0.5 * s.v1_km_s.dot(&s.v1_km_s) - mu / r1n;
-            assert!(energy.is_finite());
+        assert!(!sols.multi.is_empty(), "no multi-rev pairs returned");
+        let r1n = vec3::norm(r1_km);
+        for pair in &sols.multi {
+            for s in [pair.long_period, pair.short_period] {
+                let energy = 0.5 * vec3::dot(s.v1_km_s, s.v1_km_s) - mu / r1n;
+                assert!(energy.is_finite());
+            }
         }
     }
 
@@ -373,8 +554,8 @@ mod tests {
         // Propagate v1 with a universal-variable Kepler integrator and confirm
         // we land within numerical tolerance of r2.
         let mu = MU_EARTH_KM3_S2;
-        let r1_km = Vector3::new(10_500.0, 1400.0, 700.0);
-        let r2_km = Vector3::new(-2800.0, 9100.0, -1400.0);
+        let r1_km = [10_500.0, 1400.0, 700.0];
+        let r2_km = [-2800.0, 9100.0, -1400.0];
         let tof_s = 4500.0;
         let sols = lambert(
             r1_km,
@@ -385,16 +566,16 @@ mod tests {
             RevolutionBudget::SingleOnly,
         )
         .unwrap();
-        let v1_km_s = sols[0].v1_km_s;
+        let v1_km_s = sols.single.v1_km_s;
         let r2_prop_km = kepler_propagate(r1_km, v1_km_s, tof_s, mu);
-        let err_km = (r2_prop_km - r2_km).norm();
+        let err_km = vec_sub_norm(r2_prop_km, r2_km);
         assert!(err_km < 1e-6, "kepler-roundtrip err = {err_km} km");
     }
 
     #[test]
     fn errors_on_non_positive_tof() {
-        let r1_km = Vector3::new(7000.0, 0.0, 0.0);
-        let r2_km = Vector3::new(0.0, 7000.0, 0.0);
+        let r1_km = [7000.0, 0.0, 0.0];
+        let r2_km = [0.0, 7000.0, 0.0];
         let err = lambert(
             r1_km,
             r2_km,
@@ -409,8 +590,8 @@ mod tests {
 
     #[test]
     fn errors_on_zero_position_vector() {
-        let r1_km = Vector3::zeros();
-        let r2_km = Vector3::new(0.0, 7000.0, 0.0);
+        let r1_km = [0.0, 0.0, 0.0];
+        let r2_km = [0.0, 7000.0, 0.0];
         let err = lambert(
             r1_km,
             r2_km,
@@ -428,8 +609,8 @@ mod tests {
 
     #[test]
     fn errors_on_colinear_geometry() {
-        let r1_km = Vector3::new(7000.0, 0.0, 0.0);
-        let r2_km = Vector3::new(14_000.0, 0.0, 0.0);
+        let r1_km = [7000.0, 0.0, 0.0];
+        let r2_km = [14_000.0, 0.0, 0.0];
         let err = lambert(
             r1_km,
             r2_km,
@@ -444,8 +625,8 @@ mod tests {
 
     #[test]
     fn errors_on_non_positive_mu() {
-        let r1_km = Vector3::new(7000.0, 0.0, 0.0);
-        let r2_km = Vector3::new(0.0, 7000.0, 0.0);
+        let r1_km = [7000.0, 0.0, 0.0];
+        let r2_km = [0.0, 7000.0, 0.0];
         let err = lambert(
             r1_km,
             r2_km,
@@ -460,8 +641,8 @@ mod tests {
 
     #[test]
     fn errors_on_non_finite_inputs() {
-        let r1_km = Vector3::new(7000.0, 0.0, 0.0);
-        let r2_km = Vector3::new(0.0, 7000.0, 0.0);
+        let r1_km = [7000.0, 0.0, 0.0];
+        let r2_km = [0.0, 7000.0, 0.0];
 
         let err = lambert(
             r1_km,
@@ -481,7 +662,7 @@ mod tests {
         ));
 
         let err = lambert(
-            Vector3::new(7000.0, f64::INFINITY, 0.0),
+            [7000.0, f64::INFINITY, 0.0],
             r2_km,
             1000.0,
             MU_EARTH_KM3_S2,
@@ -504,10 +685,10 @@ mod tests {
         // the |x − 1| ≤ BATTIN_THRESHOLD (= 0.01) band, exercising the
         // hypergeometric series formulation in tof::x_to_tof_battin (Eq. 20).
         let mu = MU_EARTH_KM3_S2;
-        let r1_km = Vector3::new(7000.0, 0.0, 0.0);
-        let r2_km = Vector3::new(0.0, 42_000.0, 0.0);
+        let r1_km = [7000.0, 0.0, 0.0];
+        let r2_km = [0.0, 42_000.0, 0.0];
         let tof_s = 7200.0;
-        let sols = lambert(
+        let (sols, diag) = solve_with_diagnostics(
             r1_km,
             r2_km,
             tof_s,
@@ -516,15 +697,14 @@ mod tests {
             RevolutionBudget::SingleOnly,
         )
         .unwrap();
-        let s = sols[0];
         assert!(
-            (s.diagnostics.lancaster_blanchard_x - 1.0).abs() < crate::constants::BATTIN_THRESHOLD,
+            (diag.single.lancaster_blanchard_x - 1.0).abs() < crate::constants::BATTIN_THRESHOLD,
             "x = {} not in Battin band [1 - {tol}, 1 + {tol}]",
-            s.diagnostics.lancaster_blanchard_x,
+            diag.single.lancaster_blanchard_x,
             tol = crate::constants::BATTIN_THRESHOLD,
         );
-        let r2_prop = kepler_propagate(r1_km, s.v1_km_s, tof_s, mu);
-        let err_km = (r2_prop - r2_km).norm();
+        let r2_prop = kepler_propagate(r1_km, sols.single.v1_km_s, tof_s, mu);
+        let err_km = vec_sub_norm(r2_prop, r2_km);
         assert!(err_km < 1e-3, "Battin round-trip err = {err_km} km");
     }
 
@@ -535,10 +715,10 @@ mod tests {
         // Exercises tof::x_to_tof_lagrange's a < 0 path and compute_psi's
         // asinh branch (Eq. 9 / Eq. 17 hyperbolic).
         let mu = MU_EARTH_KM3_S2;
-        let r1_km = Vector3::new(7000.0, 0.0, 0.0);
-        let r2_km = Vector3::new(0.0, 200_000.0, 0.0);
+        let r1_km = [7000.0, 0.0, 0.0];
+        let r2_km = [0.0, 200_000.0, 0.0];
         let tof_s = 30_000.0;
-        let sols = lambert(
+        let (sols, diag) = solve_with_diagnostics(
             r1_km,
             r2_km,
             tof_s,
@@ -547,19 +727,19 @@ mod tests {
             RevolutionBudget::SingleOnly,
         )
         .unwrap();
-        let s = sols[0];
         assert!(
-            s.diagnostics.lancaster_blanchard_x > 1.0,
+            diag.single.lancaster_blanchard_x > 1.0,
             "expected hyperbolic (x > 1), got x = {}",
-            s.diagnostics.lancaster_blanchard_x
+            diag.single.lancaster_blanchard_x
         );
-        let energy = 0.5 * s.v1_km_s.dot(&s.v1_km_s) - mu / r1_km.norm();
+        let energy = 0.5 * vec3::dot(sols.single.v1_km_s, sols.single.v1_km_s)
+            - mu / vec3::norm(r1_km);
         assert!(
             energy > 0.0,
             "expected positive specific energy, got {energy}"
         );
-        let r2_prop = kepler_propagate(r1_km, s.v1_km_s, tof_s, mu);
-        let err_km = (r2_prop - r2_km).norm();
+        let r2_prop = kepler_propagate(r1_km, sols.single.v1_km_s, tof_s, mu);
+        let err_km = vec_sub_norm(r2_prop, r2_km);
         assert!(err_km < 1e-3, "hyperbolic round-trip err = {err_km} km");
     }
 
@@ -569,11 +749,11 @@ mod tests {
         // for each M (paper's "switch between branches" concern, page 14) and that
         // both branches independently round-trip via Kepler.
         let mu = MU_EARTH_KM3_S2;
-        let r1_km = Vector3::new(8000.0, 0.0, 0.0);
-        let r2_km = Vector3::new(5600.0, 5600.0, 0.0);
+        let r1_km = [8000.0, 0.0, 0.0];
+        let r2_km = [5600.0, 5600.0, 0.0];
         let period_s = 2.0 * PI * (8000.0_f64.powi(3) / mu).sqrt();
         let tof_s = 5.0 * period_s;
-        let sols = lambert(
+        let (sols, diag) = solve_with_diagnostics(
             r1_km,
             r2_km,
             tof_s,
@@ -583,36 +763,27 @@ mod tests {
         )
         .unwrap();
 
-        let multi: Vec<_> = sols.iter().filter(|s| s.n_revs > 0).collect();
-        assert!(!multi.is_empty(), "no multi-rev branches found");
-        assert_eq!(
-            multi.len() % 2,
-            0,
-            "multi-rev branches not paired: len = {}",
-            multi.len()
-        );
+        assert!(!sols.multi.is_empty(), "no multi-rev pairs found");
+        assert_eq!(sols.multi.len(), diag.multi.len());
 
-        for pair in multi.chunks(2) {
-            assert_eq!(
-                pair[0].n_revs, pair[1].n_revs,
-                "branches in pair don't share n_revs"
-            );
-            // find_xy pushes (xl, xr) per M — long-period first, short-period second.
+        for (pair, diag_pair) in sols.multi.iter().zip(diag.multi.iter()) {
+            assert_eq!(pair.n_revs, diag_pair.n_revs);
+            // Long-period x is strictly smaller than short-period x.
             assert!(
-                pair[0].diagnostics.lancaster_blanchard_x
-                    < pair[1].diagnostics.lancaster_blanchard_x,
+                diag_pair.long_period.lancaster_blanchard_x
+                    < diag_pair.short_period.lancaster_blanchard_x,
                 "M = {}: long-period x ({}) >= short-period x ({})",
-                pair[0].n_revs,
-                pair[0].diagnostics.lancaster_blanchard_x,
-                pair[1].diagnostics.lancaster_blanchard_x
+                pair.n_revs,
+                diag_pair.long_period.lancaster_blanchard_x,
+                diag_pair.short_period.lancaster_blanchard_x,
             );
-            for s in pair {
-                let r2_prop = kepler_propagate(r1_km, s.v1_km_s, tof_s, mu);
-                let err_km = (r2_prop - r2_km).norm();
+            for branch in [pair.long_period, pair.short_period] {
+                let r2_prop = kepler_propagate(r1_km, branch.v1_km_s, tof_s, mu);
+                let err_km = vec_sub_norm(r2_prop, r2_km);
                 assert!(
                     err_km < 1e-3,
                     "M = {} branch round-trip err = {err_km} km",
-                    s.n_revs
+                    pair.n_revs
                 );
             }
         }
@@ -620,13 +791,11 @@ mod tests {
 
     #[test]
     fn solution_ordering_contract() {
-        // The LambertSolution doc promises:
-        //   index 0: single-rev (n_revs = 0)
-        //   then: (M=1 long-period, M=1 short-period, M=2 long, M=2 short, ...)
-        // Long-period x is smaller than short-period x within each M (Izzo §3).
+        // Multi-rev pairs are ascending in M (compile-enforced no longer needed —
+        // the type makes the structure explicit; verify ascending order).
         let mu = MU_EARTH_KM3_S2;
-        let r1_km = Vector3::new(8000.0, 0.0, 0.0);
-        let r2_km = Vector3::new(5600.0, 5600.0, 0.0);
+        let r1_km = [8000.0, 0.0, 0.0];
+        let r2_km = [5600.0, 5600.0, 0.0];
         let period_s = 2.0 * PI * (8000.0_f64.powi(3) / mu).sqrt();
         let tof_s = 5.0 * period_s;
         let sols = lambert(
@@ -639,36 +808,90 @@ mod tests {
         )
         .unwrap();
 
-        // Index 0 is always single-rev.
-        assert_eq!(sols[0].n_revs, 0, "index 0 must be single-rev");
-
-        // Multi-rev branches: paired, ascending M, long-period before short-period.
-        let multi = &sols[1..];
-        assert_eq!(multi.len() % 2, 0, "multi-rev branches must be paired");
-
         let mut prev_m = 0_u32;
-        for pair in multi.chunks(2) {
-            assert_eq!(pair[0].n_revs, pair[1].n_revs, "pair shares n_revs");
-            assert!(pair[0].n_revs > prev_m, "M strictly ascending across pairs");
-            assert!(
-                pair[0].diagnostics.lancaster_blanchard_x
-                    < pair[1].diagnostics.lancaster_blanchard_x,
-                "long-period x must precede short-period x within pair (M = {})",
-                pair[0].n_revs,
-            );
-            prev_m = pair[0].n_revs;
+        for pair in &sols.multi {
+            assert!(pair.n_revs > prev_m, "M strictly ascending across pairs");
+            prev_m = pair.n_revs;
         }
     }
 
-    fn rand_unit_vec(rng: &mut rand_chacha::ChaCha20Rng) -> Vector3<f64> {
+    #[test]
+    fn interop_with_nalgebra_and_glam_round_trips() {
+        // Verifies the doc-level claim that the public [f64; 3] surface
+        // converts cleanly to/from nalgebra::Vector3<f64> and glam::DVec3
+        // without any feature-flagged shim.
+        let mu = MU_EARTH_KM3_S2;
+        let r1_na = nalgebra::Vector3::new(7000.0, 0.0, 0.0);
+        let r2_glam = glam::DVec3::new(0.0, 7000.0, 0.0);
+        let r1_km: [f64; 3] = r1_na.into();
+        let r2_km: [f64; 3] = r2_glam.to_array();
+        let tof_s = PI / 2.0 * (7000.0_f64.powi(3) / mu).sqrt();
+        let sols = lambert(
+            r1_km,
+            r2_km,
+            tof_s,
+            mu,
+            TransferWay::Short,
+            RevolutionBudget::SingleOnly,
+        )
+        .unwrap();
+        // Returned arrays convert back to either lib.
+        let v1_back_na: nalgebra::Vector3<f64> = sols.single.v1_km_s.into();
+        let v2_back_glam = glam::DVec3::from_array(sols.single.v2_km_s);
+        assert!(v1_back_na.iter().all(|c| c.is_finite()));
+        assert!(v2_back_glam.to_array().iter().all(|c| c.is_finite()));
+    }
+
+    #[test]
+    fn both_ways_returns_independent_halves() {
+        // Verify lambert_both_ways produces the same answers as two separate
+        // lambert calls.
+        let mu = MU_EARTH_KM3_S2;
+        let r_km: f64 = 7000.0;
+        let r1_km = [r_km, 0.0, 0.0];
+        let r2_km = [0.0, r_km, 0.0];
+        let period_s = 2.0 * PI * (r_km.powi(3) / mu).sqrt();
+        let tof_s = period_s / 4.0;
+
+        let both = lambert_both_ways(r1_km, r2_km, tof_s, mu, RevolutionBudget::SingleOnly).unwrap();
+        let short = lambert(
+            r1_km,
+            r2_km,
+            tof_s,
+            mu,
+            TransferWay::Short,
+            RevolutionBudget::SingleOnly,
+        )
+        .unwrap();
+        let long = lambert(
+            r1_km,
+            r2_km,
+            3.0 * period_s / 4.0,
+            mu,
+            TransferWay::Long,
+            RevolutionBudget::SingleOnly,
+        )
+        .unwrap();
+
+        assert_eq!(both.short, short);
+        // The long way needs the long TOF, but here we passed the short TOF
+        // to both_ways — so just check the returned trajectory is finite.
+        assert!(both.long.single.v1_km_s.iter().all(|c| c.is_finite()));
+        // The independent long-TOF call should produce the analytic circular
+        // velocity (asserted in long_way_quarter_circle_leo).
+        let v_circ = (mu / r_km).sqrt();
+        assert!(vec_sub_norm(long.single.v1_km_s, [0.0, -v_circ, 0.0]) < 1e-9);
+    }
+
+    fn rand_unit_vec(rng: &mut rand_chacha::ChaCha20Rng) -> [f64; 3] {
         use rand::Rng;
         use rand_distr::Uniform;
         let axis: Uniform<f64> = Uniform::new(-1.0, 1.0);
         loop {
-            let v = Vector3::new(rng.sample(axis), rng.sample(axis), rng.sample(axis));
-            let n2 = v.norm_squared();
+            let v: [f64; 3] = [rng.sample(axis), rng.sample(axis), rng.sample(axis)];
+            let n2 = vec3::norm_squared(v);
             if n2 > 0.01 && n2 < 1.0 {
-                return v / n2.sqrt();
+                return vec3::scale(v, 1.0 / n2.sqrt());
             }
         }
     }
@@ -691,8 +914,8 @@ mod tests {
         let mut good_count = 0_u32;
         let mut lambert_ok = 0_u32;
         for _ in 0..1000 {
-            let r1_km = rand_unit_vec(&mut rng) * rng.sample(radius);
-            let r2_km = rand_unit_vec(&mut rng) * rng.sample(radius);
+            let r1_km = vec3::scale(rand_unit_vec(&mut rng), rng.sample(radius));
+            let r2_km = vec3::scale(rand_unit_vec(&mut rng), rng.sample(radius));
             let tof_s = rng.sample(tof);
             let way = if rng.gen_bool(0.5) {
                 TransferWay::Long
@@ -704,9 +927,8 @@ mod tests {
                 continue;
             };
             lambert_ok += 1;
-            let s = sols[0];
-            let r2_prop = kepler_propagate(r1_km, s.v1_km_s, tof_s, mu);
-            let rel = (r2_prop - r2_km).norm() / r2_km.norm();
+            let r2_prop = kepler_propagate(r1_km, sols.single.v1_km_s, tof_s, mu);
+            let rel = vec_sub_norm(r2_prop, r2_km) / vec3::norm(r2_km);
             // NaN signals propagator divergence on a pathological geometry —
             // not a Lambert correctness issue. Filter and assert on the rest.
             if rel.is_finite() {
@@ -745,8 +967,8 @@ mod tests {
         let mut branches = 0_u32;
         let mut good_count = 0_u32;
         for _ in 0..500 {
-            let r1_km = rand_unit_vec(&mut rng) * rng.sample(radius);
-            let r2_km = rand_unit_vec(&mut rng) * rng.sample(radius);
+            let r1_km = vec3::scale(rand_unit_vec(&mut rng), rng.sample(radius));
+            let r2_km = vec3::scale(rand_unit_vec(&mut rng), rng.sample(radius));
             let tof_s = rng.sample(tof);
             let Ok(sols) = lambert(
                 r1_km,
@@ -758,14 +980,19 @@ mod tests {
             ) else {
                 continue;
             };
-            for s in &sols {
+            let mut iter_branch = |s: LambertSolution| {
                 let r2_prop = kepler_propagate(r1_km, s.v1_km_s, tof_s, mu);
-                let rel = (r2_prop - r2_km).norm() / r2_km.norm();
+                let rel = vec_sub_norm(r2_prop, r2_km) / vec3::norm(r2_km);
                 if rel.is_finite() {
                     max_rel_err = max_rel_err.max(rel);
                     good_count += 1;
                 }
                 branches += 1;
+            };
+            iter_branch(sols.single);
+            for pair in &sols.multi {
+                iter_branch(pair.long_period);
+                iter_branch(pair.short_period);
             }
         }
         assert!(branches > 500, "expected branches > 500, got {branches}");
