@@ -48,11 +48,16 @@ Supports:
 
 ## Features
 
-| Feature      | Default | Effect                                                                                                                                                                                                  |
-| ------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `serde`      | off     | Adds `Serialize`/`Deserialize` derives on every public type, including `LambertError`.                                                                                                                  |
-| `test-utils` | off     | Promotes the universal-variable Kepler propagator to `lambert_izzo::test_utils::kepler_propagate` so downstream integration tests can round-trip-validate Lambert solutions without re-implementing it. |
-| `rayon`      | off     | Enables `lambert_par_iter` for parallel batch evaluation. Pulls in `std` transitively — incompatible with `no_std`.                                                                                     |
+| Feature | Default | Effect                                                                                                              |
+| ------- | ------- | ------------------------------------------------------------------------------------------------------------------- |
+| `serde` | off     | Adds `Serialize`/`Deserialize` derives on every public type, including `LambertError`.                              |
+| `rayon` | off     | Enables `lambert_par_iter` for parallel batch evaluation. Pulls in `std` transitively — incompatible with `no_std`. |
+
+> Need a Kepler propagator to round-trip Lambert solutions in your own
+> tests? It used to live behind a `test-utils` feature here; it now sits
+> in the workspace-internal `lambert_izzo_test_support` crate
+> (`publish = false`). External consumers should vendor or reimplement
+> the propagator — it's ~80 lines of universal-variable / Stumpff math.
 
 MSRV: **Rust 1.85** (the first release with edition 2024 stable).
 
@@ -200,10 +205,11 @@ Random ranges:
 
 | Mode       | Convergence | Avg iters | Paper avg | Max iters | Max ΔE/E | Max ΔL/L |
 | ---------- | ----------- | --------- | --------- | --------- | -------- | -------- |
-| Single-rev | 100%        | 2.084     | 2.1       | 3         | 8.41e-12 | 1.86e-12 |
-| Multi-rev  | 100%        | 2.992     | 3.3       | 7         | 3.00e-14 | 1.37e-13 |
+| Single-rev | 100%        | 2.083     | 2.1       | 3         | 1.44e-12 | 4.14e-12 |
+| Multi-rev  | 100%        | 2.992     | 3.3       | 7         | 3.02e-14 | 5.63e-14 |
 
-Iteration counts match the paper's reported figures.
+Iteration counts match the paper's reported figures; conservation
+residuals sit at f64 round-off.
 
 ## Performance
 
@@ -279,10 +285,14 @@ math.
 - Modular layout under `src/`:
   - `constants.rs` — every named tolerance with rationale.
   - `error.rs` — structured `LambertError` enum.
-  - `vec3.rs` — internal `[f64; 3]` helpers (dot, cross, norm, etc.).
+  - `vec3.rs` — minimal internal `[f64; 3]` helpers: `dot`, `cross`,
+    `norm`, `scale`. Trivial component-wise operations are inlined at
+    their call sites.
   - `geometry.rs` — chord, semi-perimeter, λ, transfer-plane basis;
     constructed once per call.
   - `tof.rs` — three-regime TOF dispatch + analytic derivatives (Eq. 22).
+    The `_with_y` variants accept a precomputed `y = √(1 − λ²(1 − x²))`
+    so the Householder loop computes it once per step instead of twice.
   - `root_finding.rs` — Householder (Eq. 30/31 starters) + Halley
     `T_min` search.
   - `lib.rs` — public API + integration tests.

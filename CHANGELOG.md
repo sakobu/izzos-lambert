@@ -10,6 +10,57 @@ it reaches `1.0`.
 Targeting a `1.0.0` release once the API and feature surface have settled
 through external review.
 
+### Removed (breaking)
+
+- **`test-utils` feature** removed from `lambert_izzo`. The Kepler
+  propagator it exposed has moved to a new workspace-internal crate,
+  `lambert_izzo_test_support` (path-only, `publish = false`). Callers
+  that previously enabled `test-utils` should add
+  `lambert_izzo_test_support` as a dev-dependency and import from
+  `lambert_izzo_test_support::kepler::propagate` directly.
+- **`pub mod test_utils`** and `src/test_helpers.rs` removed alongside
+  the feature; the redundant external `tests/test_utils_smoke.rs` is
+  gone (its coverage is fully subsumed by `src/lib.rs`'s inline tests).
+
+### Added
+
+- **`lambert_izzo_test_support` crate** (workspace-internal) consolidates
+  dev fixtures previously duplicated across examples, benches, and
+  integration tests:
+  - `bodies::{MU_EARTH, MU_SUN, AU}` — standard astrodynamics constants
+  - `rand_unit_vec(rng)` — rejection-sampling unit-vector helper
+  - `kepler::propagate(r, v, dt, mu)` — universal-variable propagator
+- **Doc-rubric coverage** on `solve_with_diagnostics`, `lambert_both_ways`,
+  and the WASM wrappers (`solve_lambert`, `solve_lambert_request`).
+  Each now has explicit `# Invariants` and `# Validity` sections that
+  defer to `lambert`'s rubric.
+
+### Changed (internal)
+
+- **`vec3.rs` trimmed** from 9 functions to 4 (`dot`, `cross`, `norm`,
+  `scale`). `add`, `sub`, `normalize`, `try_normalize`, `norm_squared`
+  are inlined at their few remaining call sites in `geometry.rs` and
+  the velocity reconstructor in `lib.rs`. The lib's inline tests now
+  use `glam::DVec3` for symmetry with the examples and benches.
+- **Hot-path: hoisted `y` out of the Householder / Halley iteration.**
+  `tof::x_to_tof_with_y` and `tof::tof_derivatives_with_y` accept
+  precomputed `y = sqrt(1 − λ²(1 − x²))`; the iteration loops compute
+  it once per step and thread it into both calls, saving one
+  `sqrt + arithmetic` per iteration on the dominant hot path.
+- **Redundant `(1 − x²)` recomputation eliminated** in
+  `tof::compute_psi` — now takes the precomputed value from its sole
+  caller, `x_to_tof_lancaster`.
+- **Examples, benches, and integration tests** dropped their
+  hand-rolled vec helpers, local `MU_EARTH` constants (9 sites), and
+  local `rand_unit_vec` impls (5 sites). All pull from
+  `lambert_izzo_test_support` + `glam::DVec3`.
+- **`glam`** promoted from `lambert_izzo`'s inline dev-dep to
+  `[workspace.dependencies]`.
+
+Behavior is preserved exactly — `examples/stress.rs` shows identical
+solver-iteration histograms and conservation residuals at f64
+round-off (~1e-12 single-rev, ~1e-14 multi-rev).
+
 ## [0.5.0] — 2026-04-26
 
 ### Changed (breaking)

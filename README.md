@@ -10,9 +10,15 @@ adapter.
   `[f64; 3]` arrays — no hard math-library dependency.
 - `crates/lambert_izzo_wasm`: thin `wasm-bindgen` adapter that exposes
   JavaScript and TypeScript friendly request and response types.
+- `crates/lambert_izzo_test_support`: workspace-internal dev fixtures
+  (`publish = false`) — astrodynamics constants (`MU_EARTH`, `MU_SUN`,
+  `AU`), a rejection-sampling unit-vector helper, and a
+  universal-variable Kepler propagator used by the examples, benches,
+  and integration tests across both other crates.
 
 The core crate stays free of JavaScript concerns. The WASM crate owns
-TypeScript type generation and JavaScript error conversion.
+TypeScript type generation and JavaScript error conversion. The test
+support crate is path-only — it never reaches `crates.io`.
 
 ## Rust usage
 
