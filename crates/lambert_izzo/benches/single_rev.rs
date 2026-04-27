@@ -9,7 +9,7 @@ use rand_chacha::ChaCha20Rng;
 use rand_distr::Uniform;
 use std::hint::black_box;
 
-const MU_EARTH_KM3_S2: f64 = 398_600.441_8;
+const MU_EARTH: f64 = 398_600.441_8;
 
 fn rand_unit_vec(rng: &mut ChaCha20Rng) -> [f64; 3] {
     let axis: Uniform<f64> = Uniform::new(-1.0, 1.0);
@@ -26,7 +26,7 @@ fn rand_unit_vec(rng: &mut ChaCha20Rng) -> [f64; 3] {
 fn build_inputs(n: usize, seed: u64) -> Vec<LambertInput> {
     let mut rng = ChaCha20Rng::seed_from_u64(seed);
     let radius = Uniform::new(3500.0_f64, 28_000.0_f64);
-    let tof = Uniform::new(100.0_f64, 50_000.0_f64);
+    let tof_dist = Uniform::new(100.0_f64, 50_000.0_f64);
     (0..n)
         .map(|_| {
             let r1n = rng.sample(radius);
@@ -34,10 +34,10 @@ fn build_inputs(n: usize, seed: u64) -> Vec<LambertInput> {
             let r1u = rand_unit_vec(&mut rng);
             let r2u = rand_unit_vec(&mut rng);
             LambertInput {
-                r1_km: [r1u[0] * r1n, r1u[1] * r1n, r1u[2] * r1n],
-                r2_km: [r2u[0] * r2n, r2u[1] * r2n, r2u[2] * r2n],
-                tof_s: rng.sample(tof),
-                mu_km3_s2: MU_EARTH_KM3_S2,
+                r1: [r1u[0] * r1n, r1u[1] * r1n, r1u[2] * r1n],
+                r2: [r2u[0] * r2n, r2u[1] * r2n, r2u[2] * r2n],
+                tof: rng.sample(tof_dist),
+                mu: MU_EARTH,
                 way: if rng.gen_bool(0.5) {
                     TransferWay::Long
                 } else {
@@ -59,10 +59,10 @@ fn single_rev_throughput(c: &mut Criterion) {
         b.iter(|| {
             for input in &inputs {
                 let _ = black_box(lambert(
-                    input.r1_km,
-                    input.r2_km,
-                    input.tof_s,
-                    input.mu_km3_s2,
+                    input.r1,
+                    input.r2,
+                    input.tof,
+                    input.mu,
                     input.way,
                     input.revolutions,
                 ));

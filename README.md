@@ -19,20 +19,20 @@ TypeScript type generation and JavaScript error conversion.
 ```rust
 use lambert_izzo::{lambert, RevolutionBudget, TransferWay};
 
-let mu_km3_s2 = 398_600.441_8;
-let r1_km = [7000.0, 0.0, 0.0];
-let r2_km = [0.0, 7000.0, 0.0];
-let tof_s = core::f64::consts::PI / 2.0 * (7000.0_f64.powi(3) / mu_km3_s2).sqrt();
+let mu = 398_600.441_8;
+let r1 = [7000.0, 0.0, 0.0];
+let r2 = [0.0, 7000.0, 0.0];
+let tof = core::f64::consts::PI / 2.0 * (7000.0_f64.powi(3) / mu).sqrt();
 
 let solutions = lambert(
-    r1_km,
-    r2_km,
-    tof_s,
-    mu_km3_s2,
+    r1,
+    r2,
+    tof,
+    mu,
     TransferWay::Short,
     RevolutionBudget::SingleOnly,
 )?;
-let v1_km_s = solutions.single.v1_km_s;
+let v1 = solutions.single.v1;
 ```
 
 ## WASM usage
@@ -51,15 +51,15 @@ import init, { solveLambert } from "./pkg/lambert_izzo_wasm";
 await init();
 
 const response = solveLambert({
-  r1Km: [7000, 0, 0],
-  r2Km: [0, 7000, 0],
-  tofS: 1457,
-  muKm3S2: 398600.4418,
+  r1: [7000, 0, 0],
+  r2: [0, 7000, 0],
+  tof: 1457,
+  mu: 398600.4418,
   way: "short",
   maxRevs: 0,
 });
 
-console.log(response.single.v1KmS);
+console.log(response.single.v1);
 ```
 
 The wrapper returns the same shape as the Rust core (camelCased):
@@ -67,15 +67,15 @@ The wrapper returns the same shape as the Rust core (camelCased):
 ```ts
 {
   single: {
-    v1KmS: [number, number, number],
-    v2KmS: [number, number, number],
+    v1: [number, number, number],
+    v2: [number, number, number],
     diagnostics: { iters: number, x: number }
   },
   multi: [
     {
       nRevs: number,
-      longPeriod:  { v1KmS, v2KmS, diagnostics },
-      shortPeriod: { v1KmS, v2KmS, diagnostics }
+      longPeriod:  { v1, v2, diagnostics },
+      shortPeriod: { v1, v2, diagnostics }
     }
   ]
 }

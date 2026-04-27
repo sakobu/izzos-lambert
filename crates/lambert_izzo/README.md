@@ -13,18 +13,18 @@ read [`docs/concepts.md`](docs/concepts.md) first.
 
 ## What this solves (and what it doesn't)
 
-| Capability                                                            | Supported |
-| --------------------------------------------------------------------- | --------- |
-| Single-revolution two-body transfers (elliptic, parabolic, hyperbolic)| ✅         |
-| Multi-revolution transfers, both long- and short-period branches      | ✅         |
-| Short-way and long-way arc selection                                  | ✅         |
-| Frame-invariant inputs/outputs (any inertial frame the caller chooses) | ✅         |
-| `no_std` and WASM (`wasm32-unknown-unknown`) builds                    | ✅         |
-| Optional Rayon-backed parallel batch evaluation                       | ✅         |
-| Patched-conic / sphere-of-influence transitions                       | ❌ caller  |
-| Lunar swing-by, n-body perturbations, J2/J3 effects                   | ❌ caller  |
-| Low-thrust / continuous-thrust transfers                              | ❌         |
-| Outer-loop optimization (porkchop-min, primer-vector, …)              | ❌ caller  |
+| Capability                                                             | Supported |
+| ---------------------------------------------------------------------- | --------- |
+| Single-revolution two-body transfers (elliptic, parabolic, hyperbolic) | ✅        |
+| Multi-revolution transfers, both long- and short-period branches       | ✅        |
+| Short-way and long-way arc selection                                   | ✅        |
+| Frame-invariant inputs/outputs (any inertial frame the caller chooses) | ✅        |
+| `no_std` and WASM (`wasm32-unknown-unknown`) builds                    | ✅        |
+| Optional Rayon-backed parallel batch evaluation                        | ✅        |
+| Patched-conic / sphere-of-influence transitions                        | ❌ caller |
+| Lunar swing-by, n-body perturbations, J2/J3 effects                    | ❌ caller |
+| Low-thrust / continuous-thrust transfers                               | ❌        |
+| Outer-loop optimization (porkchop-min, primer-vector, …)               | ❌ caller |
 
 "❌ caller" means this is the right Lambert solver to call from inside
 those higher-level routines — but the routine itself isn't part of this
@@ -34,42 +34,50 @@ Supports:
 
 - Single-revolution transfers
 - Multi-revolution transfers (long-period and short-period branches)
-- Short-way and long-way transfers (`TransferWay::Short` / `TransferWay::Long`,
-  or `lambert_both_ways(...)` for one call returning both); prograde vs retrograde
-  is the caller's choice via the `(r1, r2)` ordering, since
-  `r1 × r2` defines the resulting orbit's angular-momentum direction
+- Short-way and long-way transfers (`TransferWay::Short` /
+  `TransferWay::Long`, or `lambert_both_ways(...)` for one call returning
+  both); prograde vs retrograde is the caller's choice via the `(r1, r2)`
+  ordering, since `r1 × r2` defines the resulting orbit's
+  angular-momentum direction
 - Hyperbolic transfers on the single-rev branch
-- `no_std`-friendly — pulls only `arrayvec`, `num-traits` (with `libm`), and
-  `thiserror` (`std`-feature off) at runtime
-- WASM-compatible math kernel (`cargo build --target wasm32-unknown-unknown --no-default-features --lib`)
+- `no_std`-friendly — pulls only `arrayvec`, `num-traits` (with `libm`),
+  and `thiserror` (`std`-feature off) at runtime
+- WASM-compatible math kernel
+  (`cargo build --target wasm32-unknown-unknown --no-default-features --lib`)
 - Zero hard math-library dependency — public surface is `[f64; 3]`
 
 ## Features
 
-| Feature      | Default | Effect                                                                                                |
-| ------------ | ------- | ----------------------------------------------------------------------------------------------------- |
-| `serde`      | off     | Adds `Serialize`/`Deserialize` derives on every public type, including `LambertError`.               |
+| Feature      | Default | Effect                                                                                                                                                                                                  |
+| ------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `serde`      | off     | Adds `Serialize`/`Deserialize` derives on every public type, including `LambertError`.                                                                                                                  |
 | `test-utils` | off     | Promotes the universal-variable Kepler propagator to `lambert_izzo::test_utils::kepler_propagate` so downstream integration tests can round-trip-validate Lambert solutions without re-implementing it. |
-| `rayon`      | off     | Enables `lambert_par_iter` for parallel batch evaluation. Pulls in `std` transitively — incompatible with `no_std`. |
+| `rayon`      | off     | Enables `lambert_par_iter` for parallel batch evaluation. Pulls in `std` transitively — incompatible with `no_std`.                                                                                     |
 
 MSRV: **Rust 1.85** (the first release with edition 2024 stable).
 
 ## Units
 
-Public API uses SI conventions:
+The crate is unit-agnostic at the type level — every quantity is plain
+`f64` or `[f64; 3]`. The convention used in the docs and examples is SI
+for astrodynamics work:
 
-| Quantity                | Suffix    | Unit   |
-| ----------------------- | --------- | ------ |
-| Position                | `_km`     | km     |
-| Velocity                | `_km_s`   | km/s   |
-| Time                    | `_s`      | s      |
-| Gravitational parameter | `_km3_s2` | km³/s² |
+| Quantity                | Unit   |
+| ----------------------- | ------ |
+| Position                | km     |
+| Velocity                | km/s   |
+| Time of flight          | s      |
+| Gravitational parameter | km³/s² |
 
-The algorithm is mathematically frame-invariant under any inertial frame —
-pass `r1_km`, `r2_km` in the same inertial frame (ECI, HCRS, MCI, …) and
-the returned velocities are in that same frame. The function signature
-itself is frame-agnostic; the calling code's variable names carry the
-frame info.
+Any consistent unit system works — pass `r` in meters and `mu` in m³/s²
+and you get velocities in m/s. The math is dimensionally homogeneous;
+unit safety is the caller's responsibility, helped by your own variable
+names (`r1_eci_km`, `mu_earth_km3_s2`, etc.) at the call site.
+
+The algorithm is also frame-invariant under any inertial frame — pass
+`r1`, `r2` in the same inertial frame (ECI, HCRS, MCI, …) and the
+returned velocities are in that same frame. The function signature is
+frame-agnostic; the calling code's variable names carry the frame info.
 
 ## Usage
 
@@ -77,35 +85,36 @@ frame info.
 use lambert_izzo::{lambert, RevolutionBudget, TransferWay};
 
 // LEO → MEO Hohmann transfer.
-let mu_km3_s2 = 398_600.441_8;
-let r1_km = [7000.0, 0.0, 0.0];
-let r2_km = [-12_000.0, 1.0, 0.0]; // 1 km off-axis avoids colinearity
-let a_km = (7000.0 + 12_000.0) / 2.0;
-let tof_s = std::f64::consts::PI * (a_km.powi(3) / mu_km3_s2).sqrt();
+let mu = 398_600.441_8;
+let r1 = [7000.0, 0.0, 0.0];
+let r2 = [-12_000.0, 1.0, 0.0]; // 1 km off-axis avoids colinearity
+let a = (7000.0 + 12_000.0) / 2.0;
+let tof = std::f64::consts::PI * (a.powi(3) / mu).sqrt();
 
 let solutions = lambert(
-    r1_km, r2_km, tof_s, mu_km3_s2,
+    r1, r2, tof, mu,
     TransferWay::Short, RevolutionBudget::SingleOnly,
 ).unwrap();
-let v1_km_s = solutions.single.v1_km_s;
-let v2_km_s = solutions.single.v2_km_s;
+let v1 = solutions.single.v1;
+let v2 = solutions.single.v2;
 ```
 
 The signature:
 
 ```rust
 pub fn lambert(
-    r1_km: [f64; 3],        // initial position (km), any inertial frame
-    r2_km: [f64; 3],        // final position (km), same frame
-    tof_s: f64,             // time of flight (s), > 0
-    mu_km3_s2: f64,         // gravitational parameter (km³/s²), > 0
-    way: TransferWay,       // Short or Long way around the transfer plane
+    r1: [f64; 3],                  // initial position, any inertial frame
+    r2: [f64; 3],                  // final position, same frame
+    tof: f64,                      // time of flight, > 0
+    mu: f64,                       // gravitational parameter, > 0
+    way: TransferWay,              // Short or Long way around the transfer plane
     revolutions: RevolutionBudget, // SingleOnly or UpTo(NonZero<u32>)
 ) -> Result<LambertSolutions, LambertError>
 ```
 
-The returned `LambertSolutions` is a typed shape — single-revolution always
-present, multi-revolution branches in `(long_period, short_period)` pairs:
+The returned `LambertSolutions` is a typed shape — single-revolution
+always present, multi-revolution branches in `(long_period, short_period)`
+pairs:
 
 ```rust
 pub struct LambertSolutions {
@@ -120,69 +129,71 @@ pub struct MultiRevPair {
 }
 
 pub struct LambertSolution {
-    pub v1_km_s: [f64; 3],
-    pub v2_km_s: [f64; 3],
+    pub v1: [f64; 3],
+    pub v2: [f64; 3],
 }
 ```
 
-For the iteration count and Lancaster–Blanchard `x` (useful for diagnosing
-multi-rev branches), use `solve_with_diagnostics`:
+For the iteration count and Lancaster–Blanchard `x` (useful for
+diagnosing multi-rev branches), use `solve_with_diagnostics`:
 
 ```rust
 use lambert_izzo::solve_with_diagnostics;
 let (sols, diag) = solve_with_diagnostics(
-    r1_km, r2_km, tof_s, mu_km3_s2,
+    r1, r2, tof, mu,
     TransferWay::Short, RevolutionBudget::up_to(3),
 )?;
 println!("converged in {} iters", diag.single.iters);
 ```
 
-For the porkchop-plot pattern (you want both ways), use `lambert_both_ways`:
+For the porkchop-plot pattern (you want both ways), use
+`lambert_both_ways`:
 
 ```rust
 use lambert_izzo::lambert_both_ways;
-let both = lambert_both_ways(r1_km, r2_km, tof_s, mu_km3_s2, RevolutionBudget::up_to(3))?;
-let short_v1 = both.short.single.v1_km_s;
-let long_v1 = both.long.single.v1_km_s;
+let both = lambert_both_ways(r1, r2, tof, mu, RevolutionBudget::up_to(3))?;
+let short_v1 = both.short.single.v1;
+let long_v1 = both.long.single.v1;
 ```
 
 `LambertError` is a `thiserror` enum with structured fields:
 
 ```rust
-match lambert(r1_km, r2_km, tof_s, mu_km3_s2, TransferWay::Short, RevolutionBudget::SingleOnly) {
+match lambert(r1, r2, tof, mu, TransferWay::Short, RevolutionBudget::SingleOnly) {
     Ok(sols) => /* … */,
-    Err(LambertError::NonFiniteInput { parameter, value }) => /* … */,
-    Err(LambertError::NonPositiveTimeOfFlight { tof_s })       => /* … */,
-    Err(LambertError::NonPositiveMu { mu_km3_s2 })             => /* … */,
-    Err(LambertError::DegeneratePositionVector { which, norm_km }) => /* … */,
-    Err(LambertError::CollinearGeometry { sin_angle })         => /* … */,
-    Err(LambertError::NoConvergence { iterations, last_step, n_revs }) => /* … */,
+    Err(LambertError::NonFiniteInput { parameter, value })             => /* … */,
+    Err(LambertError::NonPositiveTimeOfFlight { tof })                  => /* … */,
+    Err(LambertError::NonPositiveMu { mu })                             => /* … */,
+    Err(LambertError::DegeneratePositionVector { position, norm })      => /* … */,
+    Err(LambertError::CollinearGeometry { sin_angle })                  => /* … */,
+    Err(LambertError::NoConvergence { iterations, last_step, n_revs })  => /* … */,
     Err(_) => /* … */,
 }
 ```
 
 ### Math-library interop
 
-The crate has no hard math-library dependency. Both `nalgebra::Vector3<f64>`
-and `glam::DVec3` already convert to/from `[f64; 3]` natively, so callers
-using either library can pass and receive vectors without any feature flag:
+The crate has no hard math-library dependency. Both
+`nalgebra::Vector3<f64>` and `glam::DVec3` already convert to/from
+`[f64; 3]` natively, so callers using either library can pass and
+receive vectors without any feature flag:
 
 ```rust
 // nalgebra:
-let r1_km: [f64; 3] = nalgebra::Vector3::new(7000.0, 0.0, 0.0).into();
-let v1_na: nalgebra::Vector3<f64> = solutions.single.v1_km_s.into();
+let r1: [f64; 3] = nalgebra::Vector3::new(7000.0, 0.0, 0.0).into();
+let v1: nalgebra::Vector3<f64> = solutions.single.v1.into();
 
 // glam:
-let r2_km = glam::DVec3::new(0.0, 7000.0, 0.0).to_array();
-let v2_glam = glam::DVec3::from_array(solutions.single.v2_km_s);
+let r2 = glam::DVec3::new(0.0, 7000.0, 0.0).to_array();
+let v2 = glam::DVec3::from_array(solutions.single.v2);
 ```
 
 ## Validation
 
 The `stress` example runs 100,000 random Earth-orbit geometries each for
 single-rev and multi-rev (up to `M = 5`), checking vis-viva energy and
-angular-momentum conservation between the returned `(v1_km_s, v2_km_s)`
-pair. Random ranges:
+angular-momentum conservation between the returned `(v1, v2)` pair.
+Random ranges:
 
 - Single-rev: `r ∈ [3500, 28_000]` km, `tof ∈ [100, 50_000]` s
 - Multi-rev: `r ∈ [5600, 10_500]` km, `tof ∈ [10_000, 250_000]` s
@@ -200,12 +211,12 @@ Criterion benchmarks under `crates/lambert_izzo/benches/`. Numbers below
 are from an Apple Silicon laptop (release profile, single thread except
 for the parallel batch row).
 
-| Workload                                    | Throughput       | Per call |
-| ------------------------------------------- | ---------------- | -------- |
-| Single-rev (random Earth orbits)            | ~2.7 M calls/s   | ~360 ns  |
-| Multi-rev `M=3` (Earth orbits)              | ~735 K calls/s   | ~1.4 µs  |
-| Sequential batch via `lambert_iter`         | ~1.1 M calls/s   | ~900 ns  |
-| Parallel batch via `lambert_par_iter` (rayon) | ~8.6 M calls/s   | ~116 ns  |
+| Workload                                      | Throughput     | Per call |
+| --------------------------------------------- | -------------- | -------- |
+| Single-rev (random Earth orbits)              | ~2.7 M calls/s | ~360 ns  |
+| Multi-rev `M=3` (Earth orbits)                | ~735 K calls/s | ~1.4 µs  |
+| Sequential batch via `lambert_iter`           | ~1.1 M calls/s | ~900 ns  |
+| Parallel batch via `lambert_par_iter` (rayon) | ~8.6 M calls/s | ~116 ns  |
 
 The parallel batch shows ~7.7× speedup over sequential on this machine.
 Reproduce with:
@@ -226,16 +237,16 @@ of Lambert calls, `lambert_iter` and (under the `rayon` feature)
 use lambert_izzo::{LambertInput, RevolutionBudget, TransferWay, lambert_iter};
 
 let inputs: Vec<LambertInput> = (0..10_000)
-    .map(|_| LambertInput { /* … */ # r1_km: [7000.0, 0.0, 0.0],
-        # r2_km: [0.0, 7000.0, 0.0], tof_s: 1500.0,
-        # mu_km3_s2: 398_600.4418, way: TransferWay::Short,
+    .map(|_| LambertInput { /* … */ # r1: [7000.0, 0.0, 0.0],
+        # r2: [0.0, 7000.0, 0.0], tof: 1500.0, mu: 398_600.4418,
+        # way: TransferWay::Short,
         # revolutions: RevolutionBudget::SingleOnly,
     })
     .collect();
 
 let total_dv: f64 = lambert_iter(&inputs)
     .filter_map(Result::ok)
-    .map(|sols| sols.single.v1_km_s[0].abs())
+    .map(|sols| sols.single.v1[0].abs())
     .sum();
 ```
 
@@ -255,12 +266,13 @@ cargo run --release --example errors
 The `errors` example walks every `LambertError` variant — useful as a
 template for caller-side error handling.
 
-Toolchain pinned via `rust-toolchain.toml` (1.88.0) for development; MSRV
-declared in `Cargo.toml` is 1.85. Edition 2024. Runtime dependencies are
-[`thiserror`](https://docs.rs/thiserror) (no_std mode) for the error type,
-[`arrayvec`](https://docs.rs/arrayvec) (no_std) for the bounded multi-rev
-return, and [`num-traits`](https://docs.rs/num-traits) (with `libm`) for
-`no_std` math.
+Toolchain pinned via `rust-toolchain.toml` (1.88.0) for development;
+MSRV declared in `Cargo.toml` is 1.85. Edition 2024. Runtime
+dependencies are [`thiserror`](https://docs.rs/thiserror) (no_std mode)
+for the error type, [`arrayvec`](https://docs.rs/arrayvec) (no_std) for
+the bounded multi-rev return, and
+[`num-traits`](https://docs.rs/num-traits) (with `libm`) for `no_std`
+math.
 
 ## Implementation notes
 
@@ -271,8 +283,8 @@ return, and [`num-traits`](https://docs.rs/num-traits) (with `libm`) for
   - `geometry.rs` — chord, semi-perimeter, λ, transfer-plane basis;
     constructed once per call.
   - `tof.rs` — three-regime TOF dispatch + analytic derivatives (Eq. 22).
-  - `root_finding.rs` — Householder (Eq. 30/31 starters) + Halley `T_min`
-    search.
+  - `root_finding.rs` — Householder (Eq. 30/31 starters) + Halley
+    `T_min` search.
   - `lib.rs` — public API + integration tests.
 - TOF evaluation blends Battin's series (Eq. 20) for `|x − 1| ≤ 0.01`,
   Lancaster–Blanchard (Eq. 18) for `0.01 < |x − 1| ≤ 0.2`, and Lagrange

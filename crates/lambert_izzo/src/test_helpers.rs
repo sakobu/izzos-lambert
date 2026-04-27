@@ -4,7 +4,7 @@
 //! Newton iteration on the universal Kepler equation.
 //!
 //! Inputs follow the same SI convention as the public Lambert API
-//! (`r0_km`, `v0_km_s`, `dt_s`, `mu_km3_s2`).
+//! (`r0` in km, `v0` in km/s, `dt` in s, `mu` in km³/s²).
 
 // See `vec3.rs` for the rationale on this `allow(unused_imports)`.
 #[allow(unused_imports)]
@@ -38,25 +38,22 @@ const KEPLER_CHI_DIVERGENCE: f64 = 1e12;
 /// suffer catastrophic cancellation as `ψ → 0`).
 const STUMPFF_SERIES_THRESHOLD: f64 = 1e-6;
 
-/// Propagate `(r0_km, v0_km_s)` for `dt_s` under two-body gravity.
+/// Propagate `(r0, v0)` for `dt` seconds under two-body gravity.
 ///
-/// Returns a NaN-vector if the universal-variable Newton iteration diverges
-/// (e.g. on near-parabolic geometries where the simple `χ₀ = √μ·dt·|α|`
-/// initial guess is too poor to recover). Callers in statistical tests
-/// filter divergent trials by checking componentwise finiteness.
+/// Inputs in km, km/s, s, km³/s². Returns the propagated position in km,
+/// or a NaN-vector if the universal-variable Newton iteration diverges
+/// (e.g. on near-parabolic geometries where the simple
+/// `χ₀ = √μ·dt·|α|` initial guess is too poor to recover). Callers in
+/// statistical tests filter divergent trials by checking componentwise
+/// finiteness.
 #[must_use]
-pub fn kepler_propagate(
-    r0_km: [f64; 3],
-    v0_km_s: [f64; 3],
-    dt_s: f64,
-    mu_km3_s2: f64,
-) -> [f64; 3] {
-    let r0n = vec3::norm(r0_km);
-    let v0n2 = vec3::norm_squared(v0_km_s);
-    let alpha = 2.0 / r0n - v0n2 / mu_km3_s2; // 1/a
-    let sqrt_mu = mu_km3_s2.sqrt();
-    let sigma0 = vec3::dot(r0_km, v0_km_s) / sqrt_mu;
-    let mut chi = sqrt_mu * dt_s * alpha.abs(); // initial guess
+pub fn kepler_propagate(r0: [f64; 3], v0: [f64; 3], dt: f64, mu: f64) -> [f64; 3] {
+    let r0n = vec3::norm(r0);
+    let v0n2 = vec3::norm_squared(v0);
+    let alpha = 2.0 / r0n - v0n2 / mu; // 1/a
+    let sqrt_mu = mu.sqrt();
+    let sigma0 = vec3::dot(r0, v0) / sqrt_mu;
+    let mut chi = sqrt_mu * dt * alpha.abs(); // initial guess
     let nan_vec: Vec3 = [f64::NAN, f64::NAN, f64::NAN];
     let mut converged = false;
     for _ in 0..KEPLER_MAX_ITERS {
@@ -67,7 +64,7 @@ pub fn kepler_propagate(
             return nan_vec;
         }
         let f = sigma0 * chi * chi * c2 + (1.0 - alpha * r0n) * chi * chi * chi * c3 + r0n * chi
-            - sqrt_mu * dt_s;
+            - sqrt_mu * dt;
         let dchi = -f / r;
         chi += dchi;
         if !chi.is_finite() || chi.abs() > KEPLER_CHI_DIVERGENCE {
@@ -84,8 +81,8 @@ pub fn kepler_propagate(
     let psi = alpha * chi * chi;
     let (c2, c3) = stumpff(psi);
     let f = 1.0 - chi * chi / r0n * c2;
-    let g = dt_s - chi * chi * chi / sqrt_mu * c3;
-    vec3::add(vec3::scale(r0_km, f), vec3::scale(v0_km_s, g))
+    let g = dt - chi * chi * chi / sqrt_mu * c3;
+    vec3::add(vec3::scale(r0, f), vec3::scale(v0, g))
 }
 
 /// Stumpff functions `c2(ψ)`, `c3(ψ)` with a small-ψ series expansion.

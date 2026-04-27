@@ -8,15 +8,15 @@
 #[allow(unused_imports)]
 use num_traits::Float as _;
 
-use crate::constants::{COLINEARITY_TOL, MIN_POSITION_NORM_KM};
-use crate::error::{LambertError, NonFiniteParameter};
+use crate::constants::{COLINEARITY_TOL, MIN_POSITION_NORM};
+use crate::error::{LambertError, NonFiniteParameter, Position};
 use crate::vec3::{self, Vec3};
 
 /// Pre-computed geometry for a Lambert boundary problem.
 ///
-/// All scalars and unit vectors derive from `(r1_km, r2_km, tof_s, mu_km3_s2,
-/// way)`. The solver kernels consume `lambda` and `big_t` (non-dimensional
-/// TOF); the velocity reconstruction in [`crate::lambert`] consumes the rest.
+/// All scalars and unit vectors derive from `(r1, r2, tof, mu, way)`. The
+/// solver kernels consume `lambda` and `big_t` (non-dimensional TOF); the
+/// velocity reconstruction in [`crate::lambert`] consumes the rest.
 ///
 /// Field names are math-domain names (paper symbols), not unit-tagged —
 /// these are crate-private intermediates, not public state.
@@ -54,53 +54,53 @@ impl Geometry {
     ///
     /// - [`LambertError::NonFiniteInput`] — any public scalar input or position
     ///   vector component is `NaN`, `+inf`, or `-inf`.
-    /// - [`LambertError::NonPositiveTimeOfFlight`] — `tof_s <= 0`.
-    /// - [`LambertError::NonPositiveMu`] — `mu_km3_s2 <= 0`.
+    /// - [`LambertError::NonPositiveTimeOfFlight`] — `tof <= 0`.
+    /// - [`LambertError::NonPositiveMu`] — `mu <= 0`.
     /// - [`LambertError::DegeneratePositionVector`] — `|r1|` or `|r2|`
-    ///   below [`MIN_POSITION_NORM_KM`].
+    ///   below [`MIN_POSITION_NORM`].
     /// - [`LambertError::CollinearGeometry`] — `|r1 × r2| / (|r1| · |r2|)`
     ///   below [`COLINEARITY_TOL`].
     #[allow(clippy::similar_names)] // ir1/ir2 are radial unit vectors, it1/it2 tangential — Izzo Eq. 5–7.
     pub(crate) fn from_inputs(
-        r1_km: Vec3,
-        r2_km: Vec3,
-        tof_s: f64,
-        mu_km3_s2: f64,
+        r1: Vec3,
+        r2: Vec3,
+        tof: f64,
+        mu: f64,
         way: crate::TransferWay,
     ) -> Result<Self, LambertError> {
-        validate_finite_r1(r1_km)?;
-        validate_finite_r2(r2_km)?;
-        validate_finite_scalar(NonFiniteParameter::TofS, tof_s)?;
-        validate_finite_scalar(NonFiniteParameter::MuKm3S2, mu_km3_s2)?;
+        validate_finite_r1(r1)?;
+        validate_finite_r2(r2)?;
+        validate_finite_scalar(NonFiniteParameter::Tof, tof)?;
+        validate_finite_scalar(NonFiniteParameter::Mu, mu)?;
 
-        if tof_s <= 0.0 {
-            return Err(LambertError::NonPositiveTimeOfFlight { tof_s });
+        if tof <= 0.0 {
+            return Err(LambertError::NonPositiveTimeOfFlight { tof });
         }
-        if mu_km3_s2 <= 0.0 {
-            return Err(LambertError::NonPositiveMu { mu_km3_s2 });
+        if mu <= 0.0 {
+            return Err(LambertError::NonPositiveMu { mu });
         }
 
-        let r1n = vec3::norm(r1_km);
-        let r2n = vec3::norm(r2_km);
-        if r1n < MIN_POSITION_NORM_KM {
+        let r1n = vec3::norm(r1);
+        let r2n = vec3::norm(r2);
+        if r1n < MIN_POSITION_NORM {
             return Err(LambertError::DegeneratePositionVector {
-                which: 1,
-                norm_km: r1n,
+                position: Position::R1,
+                norm: r1n,
             });
         }
-        if r2n < MIN_POSITION_NORM_KM {
+        if r2n < MIN_POSITION_NORM {
             return Err(LambertError::DegeneratePositionVector {
-                which: 2,
-                norm_km: r2n,
+                position: Position::R2,
+                norm: r2n,
             });
         }
 
-        let chord = vec3::sub(r2_km, r1_km);
+        let chord = vec3::sub(r2, r1);
         let c = vec3::norm(chord);
         let s = 0.5 * (r1n + r2n + c);
 
-        let ir1 = vec3::scale(r1_km, 1.0 / r1n);
-        let ir2 = vec3::scale(r2_km, 1.0 / r2n);
+        let ir1 = vec3::scale(r1, 1.0 / r1n);
+        let ir2 = vec3::scale(r2, 1.0 / r2n);
         let ih_raw = vec3::cross(ir1, ir2);
         let sin_angle = vec3::norm(ih_raw);
         let Some(ih) = vec3::try_normalize(ih_raw, COLINEARITY_TOL) else {
@@ -120,8 +120,8 @@ impl Geometry {
         let it1 = vec3::normalize(it1_raw);
         let it2 = vec3::normalize(it2_raw);
 
-        let big_t = (2.0 * mu_km3_s2 / (s * s * s)).sqrt() * tof_s;
-        let gamma = (mu_km3_s2 * s / 2.0).sqrt();
+        let big_t = (2.0 * mu / (s * s * s)).sqrt() * tof;
+        let gamma = (mu * s / 2.0).sqrt();
         let rho = (r1n - r2n) / c;
         let sigma = (1.0 - rho * rho).max(0.0).sqrt();
 
@@ -150,13 +150,13 @@ fn validate_finite_scalar(parameter: NonFiniteParameter, value: f64) -> Result<(
 }
 
 fn validate_finite_r1(value: Vec3) -> Result<(), LambertError> {
-    validate_finite_scalar(NonFiniteParameter::R1KmX, value[0])?;
-    validate_finite_scalar(NonFiniteParameter::R1KmY, value[1])?;
-    validate_finite_scalar(NonFiniteParameter::R1KmZ, value[2])
+    validate_finite_scalar(NonFiniteParameter::R1X, value[0])?;
+    validate_finite_scalar(NonFiniteParameter::R1Y, value[1])?;
+    validate_finite_scalar(NonFiniteParameter::R1Z, value[2])
 }
 
 fn validate_finite_r2(value: Vec3) -> Result<(), LambertError> {
-    validate_finite_scalar(NonFiniteParameter::R2KmX, value[0])?;
-    validate_finite_scalar(NonFiniteParameter::R2KmY, value[1])?;
-    validate_finite_scalar(NonFiniteParameter::R2KmZ, value[2])
+    validate_finite_scalar(NonFiniteParameter::R2X, value[0])?;
+    validate_finite_scalar(NonFiniteParameter::R2Y, value[1])?;
+    validate_finite_scalar(NonFiniteParameter::R2Z, value[2])
 }

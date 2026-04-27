@@ -10,6 +10,35 @@ it reaches `1.0`.
 Targeting a `1.0.0` release once the API and feature surface have settled
 through external review.
 
+## [0.5.0] — 2026-04-26
+
+### Changed (breaking)
+
+- **Drop unit suffixes from public API.** Parameter and field names are
+  now plain (`r1`, `r2`, `tof`, `mu`, `v1`, `v2`, `norm`) — the unit
+  convention (km, s, km/s, km³/s²) lives in the docs, matching the
+  prevailing Rust idiom. The crate is now dimensionally homogeneous in
+  any consistent unit system; the SI choice is just a documentation
+  default.
+- **`LambertError::DegeneratePositionVector`** swaps its `which: u8`
+  field for `position: Position`, where `Position` is a typed
+  `R1 | R2` enum. Lets callers pattern-match on the variant instead of
+  comparing magic numbers.
+- **`NonFiniteParameter`** variants drop the `Km` suffix (`R1KmX` →
+  `R1X`, etc.). `as_str()` returns `"r1.x"` etc.
+- **`MIN_POSITION_NORM_KM`** renamed to `MIN_POSITION_NORM`.
+- **`LambertError::NonPositiveTimeOfFlight::tof_s`** field renamed to
+  `tof`; **`LambertError::NonPositiveMu::mu_km3_s2`** to `mu`;
+  **`LambertError::DegeneratePositionVector::norm_km`** to `norm`.
+
+### WASM adapter (`lambert_izzo_wasm` v0.4.0)
+
+- Mirror types and request/response fields renamed to match the core
+  crate. JS/TS callers now see `r1`, `r2`, `tof`, `mu`, `v1`, `v2`
+  (camelCased per `serde(rename_all = "camelCase")`) instead of `r1Km`,
+  `tofS`, etc.
+- Adds a `PositionOutput` mirror enum for the core's new `Position`.
+
 ## [0.4.0] — 2026-04-26
 
 ### Added
@@ -97,7 +126,8 @@ through external review.
 - Strict lint baseline: `clippy::pedantic` + bans on `unwrap`/`expect`/
   `panic`/`unreachable` in lib code.
 
-[Unreleased]: https://github.com/sakobu/izzos_lambert/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/sakobu/izzos_lambert/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/sakobu/izzos_lambert/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/sakobu/izzos_lambert/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/sakobu/izzos_lambert/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/sakobu/izzos_lambert/compare/v0.1.0...v0.2.0

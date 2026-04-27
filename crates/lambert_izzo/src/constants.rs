@@ -6,16 +6,16 @@
 // --- Geometry tolerances ---
 //
 // Guard near-degenerate inputs in the geometry construction stage.
-// `MIN_POSITION_NORM_KM` is in km (matches the public API's `_km` convention).
+// `MIN_POSITION_NORM` is the position-vector norm threshold (km).
 // `COLINEARITY_TOL` is the unitless ratio `|r1 × r2| / (|r1| · |r2|)`.
 
 /// Minimum norm for a valid position vector (km). Below this, the position is
 /// treated as the origin and the chord/lambda construction is undefined.
 ///
-/// `1e-15 km` (= 1 femtometer) is essentially `f64` noise on a unit-scale
+/// `1e-15` (= 1 femtometer) is essentially `f64` noise on a unit-scale
 /// vector. Practical Earth-orbit callers can rely on this catching only
 /// truly-zero inputs from buggy upstream code.
-pub const MIN_POSITION_NORM_KM: f64 = 1e-15;
+pub const MIN_POSITION_NORM: f64 = 1e-15;
 
 /// Threshold below which `r1` and `r2` are treated as colinear. Compares
 /// the unitless ratio `|r1 × r2| / (|r1| · |r2|)`, so the check has meaning

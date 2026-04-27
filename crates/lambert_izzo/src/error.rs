@@ -1,5 +1,24 @@
 //! Error type returned by [`crate::lambert`].
 
+/// Identifies which of the two endpoint positions an error refers to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Position {
+    /// The initial position, `r1`.
+    R1,
+    /// The final position, `r2`.
+    R2,
+}
+
+impl core::fmt::Display for Position {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Self::R1 => "r1",
+            Self::R2 => "r2",
+        })
+    }
+}
+
 /// Identifies which public input was rejected by the finiteness check.
 ///
 /// A typed alternative to a free-form `&'static str`, so the error type
@@ -8,37 +27,37 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum NonFiniteParameter {
-    /// `r1_km.x`
-    R1KmX,
-    /// `r1_km.y`
-    R1KmY,
-    /// `r1_km.z`
-    R1KmZ,
-    /// `r2_km.x`
-    R2KmX,
-    /// `r2_km.y`
-    R2KmY,
-    /// `r2_km.z`
-    R2KmZ,
-    /// `tof_s`
-    TofS,
-    /// `mu_km3_s2`
-    MuKm3S2,
+    /// `r1.x`
+    R1X,
+    /// `r1.y`
+    R1Y,
+    /// `r1.z`
+    R1Z,
+    /// `r2.x`
+    R2X,
+    /// `r2.y`
+    R2Y,
+    /// `r2.z`
+    R2Z,
+    /// `tof`
+    Tof,
+    /// `mu`
+    Mu,
 }
 
 impl NonFiniteParameter {
-    /// String name of the offending parameter, matching the public API name.
+    /// Public-API name of the offending parameter.
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::R1KmX => "r1_km.x",
-            Self::R1KmY => "r1_km.y",
-            Self::R1KmZ => "r1_km.z",
-            Self::R2KmX => "r2_km.x",
-            Self::R2KmY => "r2_km.y",
-            Self::R2KmZ => "r2_km.z",
-            Self::TofS => "tof_s",
-            Self::MuKm3S2 => "mu_km3_s2",
+            Self::R1X => "r1.x",
+            Self::R1Y => "r1.y",
+            Self::R1Z => "r1.z",
+            Self::R2X => "r2.x",
+            Self::R2Y => "r2.y",
+            Self::R2Z => "r2.z",
+            Self::Tof => "tof",
+            Self::Mu => "mu",
         }
     }
 }
@@ -51,9 +70,10 @@ impl core::fmt::Display for NonFiniteParameter {
 
 /// Failure modes of the Izzo Lambert solver.
 ///
-/// Field units follow the crate's SI convention: `_km` for lengths, `_s` for
-/// times, `_km3_s2` for the gravitational parameter. Unitless fields
-/// (`sin_angle`, `last_step` — Izzo's dimensionless `x`-step) carry no suffix.
+/// All scalar fields use the crate's documented unit convention:
+/// positions in km, time of flight in seconds, gravitational parameter
+/// in km³/s². Unitless fields (`sin_angle`, `last_step` —
+/// Izzo's dimensionless `x`-step) carry no unit at all.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -68,29 +88,29 @@ pub enum LambertError {
     },
 
     /// Time of flight must be strictly positive.
-    #[error("non-positive time of flight: tof_s = {tof_s}")]
+    #[error("non-positive time of flight: tof = {tof}")]
     NonPositiveTimeOfFlight {
         /// The non-positive `tof` value the caller passed (s).
-        tof_s: f64,
+        tof: f64,
     },
 
     /// Gravitational parameter must be strictly positive.
-    #[error("non-positive gravitational parameter: mu_km3_s2 = {mu_km3_s2}")]
+    #[error("non-positive gravitational parameter: mu = {mu}")]
     NonPositiveMu {
         /// The non-positive `mu` value the caller passed (km³/s²).
-        mu_km3_s2: f64,
+        mu: f64,
     },
 
     /// One position vector has near-zero norm; geometry undefined.
     ///
-    /// Triggered when `|r_which|` is below
-    /// [`crate::constants::MIN_POSITION_NORM_KM`].
-    #[error("degenerate position vector r{which}: norm_km = {norm_km}")]
+    /// Triggered when `|r|` is below
+    /// [`crate::constants::MIN_POSITION_NORM`].
+    #[error("degenerate position vector {position}: norm = {norm}")]
     DegeneratePositionVector {
-        /// `1` for `r1`, `2` for `r2`.
-        which: u8,
+        /// Which of the two positions is degenerate.
+        position: Position,
         /// Norm of the offending vector (km).
-        norm_km: f64,
+        norm: f64,
     },
 
     /// `r1` and `r2` are colinear; the transfer plane is undefined.
