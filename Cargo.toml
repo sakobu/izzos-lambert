@@ -2,9 +2,11 @@
 name = "lambert_izzo"
 version = "0.2.0"
 edition = "2024"
+rust-version = "1.88"
 description = "Izzo's revisited Lambert solver (single & multi-rev, short & long way)"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
+documentation = "https://docs.rs/lambert_izzo"
 keywords = ["astrodynamics", "lambert", "orbital-mechanics", "izzo"]
 categories = ["science", "aerospace"]
 

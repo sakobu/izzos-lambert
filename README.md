@@ -77,6 +77,7 @@ multi-rev branches (if any) follow as `(long-period, short-period)` pairs.
 ```rust
 match lambert(r1_km, r2_km, tof_s, mu_km3_s2, TransferWay::Short, RevolutionBudget::SingleOnly) {
     Ok(sols) => /* … */,
+    Err(LambertError::NonFiniteInput { parameter, value }) => /* … */,
     Err(LambertError::NonPositiveTimeOfFlight { tof_s })       => /* … */,
     Err(LambertError::NonPositiveMu { mu_km3_s2 })             => /* … */,
     Err(LambertError::DegeneratePositionVector { which, norm_km }) => /* … */,

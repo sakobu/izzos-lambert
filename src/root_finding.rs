@@ -53,9 +53,13 @@ pub(crate) fn find_xy(
     let x0 = initial_guess_single_rev(big_t, t00, t1, lambda);
     let (x, iters) = householder(x0, big_t, lambda, 0)?;
     let y = compute_y(x, lambda);
-    let cap = 1 + 2 * revolutions.max() as usize; // u32 → usize: always safe (usize ≥ 32 bits)
-    let mut out = Vec::with_capacity(cap);
-    out.push(Root { x, y, n_revs: 0, iters });
+    let mut out = Vec::new();
+    out.push(Root {
+        x,
+        y,
+        n_revs: 0,
+        iters,
+    });
 
     // Multi-rev branches. Iterate upward from M = 1; stop at the first
     // infeasible branch. T_min(M) is monotonically increasing in M, so once
@@ -86,8 +90,18 @@ pub(crate) fn find_xy(
         let yl = compute_y(xl, lambda);
         let (xr, ir) = householder(x0r, big_t, lambda, m)?;
         let yr = compute_y(xr, lambda);
-        out.push(Root { x: xl, y: yl, n_revs: m, iters: il });
-        out.push(Root { x: xr, y: yr, n_revs: m, iters: ir });
+        out.push(Root {
+            x: xl,
+            y: yl,
+            n_revs: m,
+            iters: il,
+        });
+        out.push(Root {
+            x: xr,
+            y: yr,
+            n_revs: m,
+            iters: ir,
+        });
     }
     Ok(out)
 }
@@ -125,12 +139,7 @@ fn initial_guess_multi_rev(big_t: f64, m: u32) -> (f64, f64) {
 
 /// Householder's 3rd-order iteration for `T(x) − T_target = 0`.
 #[allow(clippy::similar_names)] // tol vs tof, and dt/ddt/dddt are 1st/2nd/3rd T-derivatives — Izzo Eq. 22.
-fn householder(
-    mut x: f64,
-    big_t: f64,
-    lambda: f64,
-    m: u32,
-) -> Result<(f64, u32), LambertError> {
+fn householder(mut x: f64, big_t: f64, lambda: f64, m: u32) -> Result<(f64, u32), LambertError> {
     let tol = if m == 0 {
         HOUSEHOLDER_TOL_SINGLE
     } else {

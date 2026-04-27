@@ -6,7 +6,7 @@
 //!
 //! Run with `cargo run --release --example stress`.
 
-use lambert_izzo::{lambert, RevolutionBudget, TransferWay};
+use lambert_izzo::{RevolutionBudget, TransferWay, lambert};
 use nalgebra::Vector3;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
@@ -66,14 +66,17 @@ fn main() {
             let r1_km = rand_unit_vec(&mut rng) * rng.sample(radius);
             let r2_km = rand_unit_vec(&mut rng) * rng.sample(radius);
             let tof_s = rng.sample(tof);
-            let way = if rng.gen_bool(0.5) { TransferWay::Long } else { TransferWay::Short };
+            let way = if rng.gen_bool(0.5) {
+                TransferWay::Long
+            } else {
+                TransferWay::Short
+            };
             match lambert(r1_km, r2_km, tof_s, mu, way, RevolutionBudget::SingleOnly) {
                 Ok(sols) => {
                     let s = sols[0];
                     iters_hist[s.diagnostics.iters as usize] += 1; // u32 → usize: always safe (usize ≥ 32 bits)
                     total_iters += s.diagnostics.iters;
-                    let (e_rel, h_rel) =
-                        check_conservation(r1_km, s.v1_km_s, r2_km, s.v2_km_s, mu);
+                    let (e_rel, h_rel) = check_conservation(r1_km, s.v1_km_s, r2_km, s.v2_km_s, mu);
                     if e_rel.is_finite() {
                         max_e_rel = max_e_rel.max(e_rel);
                     }
@@ -115,7 +118,14 @@ fn main() {
             let r1_km = rand_unit_vec(&mut rng) * rng.sample(radius);
             let r2_km = rand_unit_vec(&mut rng) * rng.sample(radius);
             let tof_s = rng.sample(tof);
-            match lambert(r1_km, r2_km, tof_s, mu, TransferWay::Short, RevolutionBudget::up_to(5)) {
+            match lambert(
+                r1_km,
+                r2_km,
+                tof_s,
+                mu,
+                TransferWay::Short,
+                RevolutionBudget::up_to(5),
+            ) {
                 Ok(sols) => {
                     for s in sols.iter().filter(|s| s.n_revs > 0) {
                         iters_hist[s.diagnostics.iters as usize] += 1; // u32 → usize: always safe (usize ≥ 32 bits)

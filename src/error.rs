@@ -5,8 +5,18 @@
 /// Field units follow the crate's SI convention: `_km` for lengths, `_s` for
 /// times, `_km3_s2` for the gravitational parameter. Unitless fields
 /// (`sin_angle`, `last_step` — Izzo's dimensionless `x`-step) carry no suffix.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum LambertError {
+    /// One public input was `NaN`, `+inf`, or `-inf`.
+    #[error("non-finite input: {parameter} = {value}")]
+    NonFiniteInput {
+        /// Name of the offending public parameter or vector component.
+        parameter: &'static str,
+        /// The non-finite value the caller passed.
+        value: f64,
+    },
+
     /// Time of flight must be strictly positive.
     #[error("non-positive time of flight: tof_s = {tof_s}")]
     NonPositiveTimeOfFlight {

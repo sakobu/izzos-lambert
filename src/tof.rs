@@ -17,7 +17,7 @@ use crate::constants::{
 /// Evaluate `T(x, λ, M)` using the regime-appropriate formulation.
 pub(crate) fn x_to_tof(x: f64, lambda: f64, m: u32) -> f64 {
     let dist = (x - 1.0).abs();
-    if dist <= BATTIN_THRESHOLD {
+    if m == 0 && dist <= BATTIN_THRESHOLD {
         x_to_tof_battin(x, lambda)
     } else if dist <= LAGRANGE_THRESHOLD {
         x_to_tof_lancaster(x, lambda, m)
@@ -47,9 +47,7 @@ fn x_to_tof_lagrange(x: f64, lambda: f64, m: u32) -> f64 {
         if lambda < 0.0 {
             beta = -beta;
         }
-        0.5 * a
-            * a.sqrt()
-            * ((alpha - alpha.sin()) - (beta - beta.sin()) + 2.0 * PI * f64::from(m))
+        0.5 * a * a.sqrt() * ((alpha - alpha.sin()) - (beta - beta.sin()) + 2.0 * PI * f64::from(m))
     } else {
         // Hyperbola — no multi-rev. From Eq. 15: λ·sqrt(x²−1) = sinh(β/2),
         // and (x²−1) = −1/a, so sinh(β/2) = λ·sqrt(−1/a).
@@ -128,7 +126,26 @@ pub(crate) fn tof_derivatives(x: f64, lambda: f64, tof: f64) -> (f64, f64, f64) 
 
     let dt = (3.0 * tof * x - 2.0 + 2.0 * l3 * x / y) / one_m_x2;
     let ddt = (3.0 * tof + 5.0 * x * dt + 2.0 * (1.0 - l2) * l3 / (y * y * y)) / one_m_x2;
-    let dddt =
-        (7.0 * x * ddt + 8.0 * dt - 6.0 * (1.0 - l2) * l5 * x / (y.powi(5))) / one_m_x2;
+    let dddt = (7.0 * x * ddt + 8.0 * dt - 6.0 * (1.0 - l2) * l5 * x / (y.powi(5))) / one_m_x2;
     (dt, ddt, dddt)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn multi_rev_near_parabolic_keeps_revolution_term() {
+        let x = 0.995;
+        let lambda = 0.4;
+        let m = 1;
+
+        let got = x_to_tof(x, lambda, m);
+        let expected = x_to_tof_lancaster(x, lambda, m);
+
+        assert!(
+            (got - expected).abs() < 1e-12,
+            "multi-rev TOF dispatch dropped M term: got {got}, expected {expected}"
+        );
+    }
 }

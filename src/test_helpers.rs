@@ -61,9 +61,7 @@ pub(crate) fn kepler_propagate(
         if r.abs() < KEPLER_DENOM_EPS || !r.is_finite() {
             return nan_vec;
         }
-        let f = sigma0 * chi * chi * c2
-            + (1.0 - alpha * r0n) * chi * chi * chi * c3
-            + r0n * chi
+        let f = sigma0 * chi * chi * c2 + (1.0 - alpha * r0n) * chi * chi * chi * c3 + r0n * chi
             - sqrt_mu * dt_s;
         let dchi = -f / r;
         chi += dchi;

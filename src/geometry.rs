@@ -49,6 +49,8 @@ impl Geometry {
     ///
     /// # Errors
     ///
+    /// - [`LambertError::NonFiniteInput`] — any public scalar input or position
+    ///   vector component is `NaN`, `+inf`, or `-inf`.
     /// - [`LambertError::NonPositiveTimeOfFlight`] — `tof_s <= 0`.
     /// - [`LambertError::NonPositiveMu`] — `mu_km3_s2 <= 0`.
     /// - [`LambertError::DegeneratePositionVector`] — `|r1|` or `|r2|`
@@ -63,6 +65,11 @@ impl Geometry {
         mu_km3_s2: f64,
         way: crate::TransferWay,
     ) -> Result<Self, LambertError> {
+        validate_finite_vector("r1_km", r1_km)?;
+        validate_finite_vector("r2_km", r2_km)?;
+        validate_finite_scalar("tof_s", tof_s)?;
+        validate_finite_scalar("mu_km3_s2", mu_km3_s2)?;
+
         if tof_s <= 0.0 {
             return Err(LambertError::NonPositiveTimeOfFlight { tof_s });
         }
@@ -128,5 +135,31 @@ impl Geometry {
             it1,
             it2,
         })
+    }
+}
+
+fn validate_finite_scalar(parameter: &'static str, value: f64) -> Result<(), LambertError> {
+    if value.is_finite() {
+        Ok(())
+    } else {
+        Err(LambertError::NonFiniteInput { parameter, value })
+    }
+}
+
+fn validate_finite_vector(prefix: &'static str, value: Vector3<f64>) -> Result<(), LambertError> {
+    validate_finite_scalar(component_name(prefix, "x"), value.x)?;
+    validate_finite_scalar(component_name(prefix, "y"), value.y)?;
+    validate_finite_scalar(component_name(prefix, "z"), value.z)
+}
+
+fn component_name(prefix: &'static str, component: &'static str) -> &'static str {
+    match (prefix, component) {
+        ("r1_km", "x") => "r1_km.x",
+        ("r1_km", "y") => "r1_km.y",
+        ("r1_km", "z") => "r1_km.z",
+        ("r2_km", "x") => "r2_km.x",
+        ("r2_km", "y") => "r2_km.y",
+        ("r2_km", "z") => "r2_km.z",
+        _ => prefix,
     }
 }
