@@ -65,7 +65,12 @@ pub(crate) const HALLEY_MAX_ITERS: u32 = 12;
 ///
 /// Below `0.01`, the Lancaster form's `1/(1−x²)` factor amplifies round-off
 /// to `~1e-6` of the true TOF; Battin's series remains exact.
-pub(crate) const BATTIN_THRESHOLD: f64 = 0.01;
+///
+/// Public so callers can compare against the
+/// [`SolverDiagnostics::lancaster_blanchard_x`](crate::SolverDiagnostics)
+/// returned from [`solve_with_diagnostics`](crate::solve_with_diagnostics)
+/// to detect near-parabolic regimes.
+pub const BATTIN_THRESHOLD: f64 = 0.01;
 
 /// `BATTIN_THRESHOLD < |x − 1| ≤ this` → use Lancaster–Blanchard (Izzo Eq. 18).
 ///

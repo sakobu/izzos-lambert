@@ -4,7 +4,31 @@ A Rust port of Dario Izzo's revisited Lambert solver from the 2014 paper
 _"Revisiting Lambert's Problem"_
 ([arXiv:1403.2705](https://arxiv.org/abs/1403.2705) / Celestial Mechanics &
 Dynamical Astronomy). A local copy of the paper lives at
-[`docs/izzo.pdf`](docs/izzo.pdf).
+[`docs/izzo.pdf`](docs/izzo.pdf); for a friendly intro to the problem,
+read [`docs/concepts.md`](docs/concepts.md) first.
+
+> Pre-1.0 — the API and feature surface are stable enough for production
+> use but may shift before `1.0`. Breaking changes are tracked in
+> [`CHANGELOG.md`](CHANGELOG.md).
+
+## What this solves (and what it doesn't)
+
+| Capability                                                            | Supported |
+| --------------------------------------------------------------------- | --------- |
+| Single-revolution two-body transfers (elliptic, parabolic, hyperbolic)| ✅         |
+| Multi-revolution transfers, both long- and short-period branches      | ✅         |
+| Short-way and long-way arc selection                                  | ✅         |
+| Frame-invariant inputs/outputs (any inertial frame the caller chooses) | ✅         |
+| `no_std` and WASM (`wasm32-unknown-unknown`) builds                    | ✅         |
+| Optional Rayon-backed parallel batch evaluation                       | ✅         |
+| Patched-conic / sphere-of-influence transitions                       | ❌ caller  |
+| Lunar swing-by, n-body perturbations, J2/J3 effects                   | ❌ caller  |
+| Low-thrust / continuous-thrust transfers                              | ❌         |
+| Outer-loop optimization (porkchop-min, primer-vector, …)              | ❌ caller  |
+
+"❌ caller" means this is the right Lambert solver to call from inside
+those higher-level routines — but the routine itself isn't part of this
+crate.
 
 Supports:
 
@@ -225,7 +249,11 @@ cargo build --release
 cargo test --release
 cargo run --release --example demo
 cargo run --release --example stress
+cargo run --release --example errors
 ```
+
+The `errors` example walks every `LambertError` variant — useful as a
+template for caller-side error handling.
 
 Toolchain pinned via `rust-toolchain.toml` (1.88.0) for development; MSRV
 declared in `Cargo.toml` is 1.85. Edition 2024. Runtime dependencies are
