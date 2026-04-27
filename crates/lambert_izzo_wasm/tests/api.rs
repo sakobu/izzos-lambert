@@ -1,3 +1,4 @@
+use lambert_izzo_test_support::bodies::MU_EARTH;
 use lambert_izzo_wasm::{
     LambertErrorOutput, LambertRequest, NonFiniteParameterOutput, PositionOutput,
     TransferWayInput, solve_lambert_request,
@@ -8,8 +9,8 @@ fn single_rev_request_returns_js_friendly_vectors() {
     let request = LambertRequest {
         r1: [7000.0, 0.0, 0.0],
         r2: [0.0, 7000.0, 0.0],
-        tof: core::f64::consts::PI / 2.0 * (7000.0_f64.powi(3) / 398_600.441_8).sqrt(),
-        mu: 398_600.441_8,
+        tof: core::f64::consts::PI / 2.0 * (7000.0_f64.powi(3) / MU_EARTH).sqrt(),
+        mu: MU_EARTH,
         way: TransferWayInput::Short,
         max_revs: 0,
     };
@@ -30,7 +31,7 @@ fn invalid_request_returns_structured_error() {
         r1: [0.0, 0.0, 0.0],
         r2: [0.0, 7000.0, 0.0],
         tof: 1000.0,
-        mu: 398_600.441_8,
+        mu: MU_EARTH,
         way: TransferWayInput::Short,
         max_revs: 0,
     };
@@ -53,7 +54,7 @@ fn non_finite_input_carries_typed_parameter() {
         r1: [7000.0, f64::INFINITY, 0.0],
         r2: [0.0, 7000.0, 0.0],
         tof: 1000.0,
-        mu: 398_600.441_8,
+        mu: MU_EARTH,
         way: TransferWayInput::Short,
         max_revs: 0,
     };

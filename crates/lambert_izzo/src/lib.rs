@@ -148,19 +148,6 @@ mod root_finding;
 mod tof;
 mod vec3;
 
-#[cfg(any(test, feature = "test-utils"))]
-mod test_helpers;
-
-/// Test utilities exposed under the `test-utils` feature.
-///
-/// Currently a universal-variable Kepler propagator suitable for
-/// round-trip-validating Lambert solutions in downstream integration
-/// tests, so callers don't have to re-implement Stumpff functions.
-#[cfg(any(test, feature = "test-utils"))]
-pub mod test_utils {
-    pub use super::test_helpers::kepler_propagate;
-}
-
 pub use error::{LambertError, NonFiniteParameter, Position};
 
 use geometry::Geometry;
@@ -402,6 +389,14 @@ pub fn lambert(
 /// The diagnostics structure mirrors the solutions structure 1:1 — `single`
 /// matches `single`, `multi[i]` matches `multi[i]`.
 ///
+/// # Invariants
+///
+/// Same as [`lambert`].
+///
+/// # Validity / near-degenerate behavior
+///
+/// Same as [`lambert`].
+///
 /// # Errors
 ///
 /// Same as [`lambert`].
@@ -428,6 +423,14 @@ pub fn solve_with_diagnostics(
 /// `TransferWay::Short` and `TransferWay::Long`; either half may have an
 /// empty `multi` while the other is populated, since `T_min(M)` differs
 /// between the two formulations.
+///
+/// # Invariants
+///
+/// Same as [`lambert`].
+///
+/// # Validity / near-degenerate behavior
+///
+/// Same as [`lambert`].
 ///
 /// # Errors
 ///
@@ -459,8 +462,17 @@ fn reconstruct(geom: &Geometry, root: &Root) -> LambertSolution {
     let v_t1 = tangential_num / geom.r1n;
     let v_t2 = tangential_num / geom.r2n;
 
-    let v1 = vec3::add(vec3::scale(geom.ir1, v_r1), vec3::scale(geom.it1, v_t1));
-    let v2 = vec3::add(vec3::scale(geom.ir2, v_r2), vec3::scale(geom.it2, v_t2));
+    // v_radial · ir + v_tangential · it, component-wise.
+    let v1 = [
+        geom.ir1[0] * v_r1 + geom.it1[0] * v_t1,
+        geom.ir1[1] * v_r1 + geom.it1[1] * v_t1,
+        geom.ir1[2] * v_r1 + geom.it1[2] * v_t1,
+    ];
+    let v2 = [
+        geom.ir2[0] * v_r2 + geom.it2[0] * v_t2,
+        geom.ir2[1] * v_r2 + geom.it2[1] * v_t2,
+        geom.ir2[2] * v_r2 + geom.it2[2] * v_t2,
+    ];
     LambertSolution { v1, v2 }
 }
 
@@ -507,21 +519,18 @@ mod tests {
     #![allow(clippy::similar_names, clippy::unwrap_used)] // r/r1/r2 test scenario inputs follow paper convention; tests are exempt from the lib's no-unwrap rule.
 
     use super::*;
-    use crate::test_helpers::kepler_propagate;
-    use crate::vec3;
     use core::f64::consts::PI;
-
-    /// Earth's gravitational parameter (km³/s²) — value from EGM2008.
-    const MU_EARTH: f64 = 398_600.441_8;
-    /// Sun's gravitational parameter (km³/s²) — value from DE440.
-    const MU_SUN: f64 = 1.327_124_400_18e11;
+    use glam::DVec3;
+    use lambert_izzo_test_support::bodies::{AU, MU_EARTH, MU_SUN};
+    use lambert_izzo_test_support::kepler::propagate as kepler_propagate;
+    use lambert_izzo_test_support::rand_unit_vec;
 
     fn approx(a: f64, b: f64, tol: f64) -> bool {
         (a - b).abs() < tol
     }
 
     fn vec_sub_norm(a: [f64; 3], b: [f64; 3]) -> f64 {
-        vec3::norm(vec3::sub(a, b))
+        (DVec3::from_array(a) - DVec3::from_array(b)).length()
     }
 
     #[test]
@@ -575,7 +584,6 @@ mod tests {
     #[test]
     fn earth_mars_hohmann() {
         // Heliocentric Hohmann transfer Earth (1 AU) → Mars (1.524 AU).
-        const AU: f64 = 1.495_978_707e8;
         let mu = MU_SUN;
         let r1n = AU;
         let r2n = 1.524 * AU;
@@ -597,7 +605,7 @@ mod tests {
         // Periapsis velocity: vis-viva at r = 1 AU on the transfer ellipse.
         let v_peri = (mu * (2.0 / r1n - 1.0 / a)).sqrt();
         // Tolerance ~1 m/s — the off-plane perturbation moves things slightly.
-        assert!(approx(vec3::norm(sols.single.v1), v_peri, 1e-3));
+        assert!(approx(DVec3::from_array(sols.single.v1).length(), v_peri, 1e-3));
     }
 
     #[test]
@@ -617,10 +625,11 @@ mod tests {
         )
         .unwrap();
         assert!(!sols.multi.is_empty(), "no multi-rev pairs returned");
-        let r1n = vec3::norm(r1);
+        let r1n = DVec3::from_array(r1).length();
         for pair in &sols.multi {
             for s in [pair.long_period, pair.short_period] {
-                let energy = 0.5 * vec3::dot(s.v1, s.v1) - mu / r1n;
+                let v1 = DVec3::from_array(s.v1);
+                let energy = 0.5 * v1.dot(v1) - mu / r1n;
                 assert!(energy.is_finite());
             }
         }
@@ -810,7 +819,8 @@ mod tests {
             "expected hyperbolic (x > 1), got x = {}",
             diag.single.lancaster_blanchard_x
         );
-        let energy = 0.5 * vec3::dot(sols.single.v1, sols.single.v1) - mu / vec3::norm(r1);
+        let v1 = DVec3::from_array(sols.single.v1);
+        let energy = 0.5 * v1.dot(v1) - mu / DVec3::from_array(r1).length();
         assert!(
             energy > 0.0,
             "expected positive specific energy, got {energy}"
@@ -970,19 +980,6 @@ mod tests {
         assert!(vec_sub_norm(long.single.v1, [0.0, -v_circ, 0.0]) < 1e-9);
     }
 
-    fn rand_unit_vec(rng: &mut rand_chacha::ChaCha20Rng) -> [f64; 3] {
-        use rand::Rng;
-        use rand_distr::Uniform;
-        let axis: Uniform<f64> = Uniform::new(-1.0, 1.0);
-        loop {
-            let v: [f64; 3] = [rng.sample(axis), rng.sample(axis), rng.sample(axis)];
-            let n2 = vec3::norm_squared(v);
-            if n2 > 0.01 && n2 < 1.0 {
-                return vec3::scale(v, 1.0 / n2.sqrt());
-            }
-        }
-    }
-
     #[test]
     fn kepler_roundtrip_random_single_rev() {
         use rand::{Rng, SeedableRng};
@@ -998,8 +995,9 @@ mod tests {
         let mut good_count = 0_u32;
         let mut lambert_ok = 0_u32;
         for _ in 0..1000 {
-            let r1 = vec3::scale(rand_unit_vec(&mut rng), rng.sample(radius));
-            let r2 = vec3::scale(rand_unit_vec(&mut rng), rng.sample(radius));
+            let (r1_mag, r2_mag) = (rng.sample(radius), rng.sample(radius));
+            let r1 = (DVec3::from_array(rand_unit_vec(&mut rng)) * r1_mag).to_array();
+            let r2 = (DVec3::from_array(rand_unit_vec(&mut rng)) * r2_mag).to_array();
             let tof = rng.sample(tof_dist);
             let way = if rng.gen_bool(0.5) {
                 TransferWay::Long
@@ -1011,7 +1009,7 @@ mod tests {
             };
             lambert_ok += 1;
             let r2_prop = kepler_propagate(r1, sols.single.v1, tof, mu);
-            let rel = vec_sub_norm(r2_prop, r2) / vec3::norm(r2);
+            let rel = vec_sub_norm(r2_prop, r2) / DVec3::from_array(r2).length();
             if rel.is_finite() {
                 max_rel_err = max_rel_err.max(rel);
                 good_count += 1;
@@ -1037,15 +1035,16 @@ mod tests {
         let mut branches = 0_u32;
         let mut good_count = 0_u32;
         for _ in 0..500 {
-            let r1 = vec3::scale(rand_unit_vec(&mut rng), rng.sample(radius));
-            let r2 = vec3::scale(rand_unit_vec(&mut rng), rng.sample(radius));
+            let (r1_mag, r2_mag) = (rng.sample(radius), rng.sample(radius));
+            let r1 = (DVec3::from_array(rand_unit_vec(&mut rng)) * r1_mag).to_array();
+            let r2 = (DVec3::from_array(rand_unit_vec(&mut rng)) * r2_mag).to_array();
             let tof = rng.sample(tof_dist);
             let Ok(sols) = lambert(r1, r2, tof, mu, TransferWay::Short, RevolutionBudget::up_to(3)) else {
                 continue;
             };
             let mut iter_branch = |s: LambertSolution| {
                 let r2_prop = kepler_propagate(r1, s.v1, tof, mu);
-                let rel = vec_sub_norm(r2_prop, r2) / vec3::norm(r2);
+                let rel = vec_sub_norm(r2_prop, r2) / DVec3::from_array(r2).length();
                 if rel.is_finite() {
                     max_rel_err = max_rel_err.max(rel);
                     good_count += 1;

@@ -259,6 +259,16 @@ impl From<LambertError> for LambertErrorOutput {
 
 /// Solve a Lambert request from JavaScript.
 ///
+/// # Invariants
+///
+/// Same as [`lambert_izzo::lambert`]. Inputs come through
+/// [`LambertRequest`]; `tof > 0`, `mu > 0`, finite vectors, transfer
+/// angle ∉ {0, π}.
+///
+/// # Validity / near-degenerate behavior
+///
+/// Same as [`lambert_izzo::lambert`].
+///
 /// # Errors
 ///
 /// Returns a structured [`LambertErrorOutput`] (serialized as a JS object
@@ -280,6 +290,16 @@ pub fn solve_lambert(request: LambertRequest) -> Result<LambertResponse, JsValue
 ///
 /// This function exists so the wrapper contract can be tested without a
 /// JavaScript runtime.
+///
+/// # Invariants
+///
+/// Same as [`lambert_izzo::lambert`]. Inputs come through
+/// [`LambertRequest`]; `tof > 0`, `mu > 0`, finite vectors, transfer
+/// angle ∉ {0, π}.
+///
+/// # Validity / near-degenerate behavior
+///
+/// Same as [`lambert_izzo::lambert`].
 ///
 /// # Errors
 ///

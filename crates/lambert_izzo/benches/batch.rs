@@ -6,24 +6,12 @@
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use lambert_izzo::{LambertInput, RevolutionBudget, TransferWay, lambert_iter};
+use lambert_izzo_test_support::bodies::MU_EARTH;
+use lambert_izzo_test_support::rand_unit_vec;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use rand_distr::Uniform;
 use std::hint::black_box;
-
-const MU_EARTH: f64 = 398_600.441_8;
-
-fn rand_unit_vec(rng: &mut ChaCha20Rng) -> [f64; 3] {
-    let axis: Uniform<f64> = Uniform::new(-1.0, 1.0);
-    loop {
-        let v: [f64; 3] = [rng.sample(axis), rng.sample(axis), rng.sample(axis)];
-        let n2 = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
-        if n2 > 0.01 && n2 < 1.0 {
-            let inv = 1.0 / n2.sqrt();
-            return [v[0] * inv, v[1] * inv, v[2] * inv];
-        }
-    }
-}
 
 fn build_inputs(n: usize, seed: u64) -> Vec<LambertInput> {
     let mut rng = ChaCha20Rng::seed_from_u64(seed);

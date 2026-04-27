@@ -3,12 +3,12 @@
 
 use core::f64::consts::PI;
 
+use glam::DVec3;
 use lambert_izzo::{
     LambertError, NonFiniteParameter, Position, RevolutionBudget, TransferWay, lambert,
     solve_with_diagnostics,
 };
-
-const MU_EARTH: f64 = 398_600.441_8;
+use lambert_izzo_test_support::bodies::MU_EARTH;
 
 fn main() {
     println!("=== 1. Colinear geometry — perturb to recover ===");
@@ -92,13 +92,11 @@ fn main() {
         sols.multi.len()
     );
     for pair in &sols.multi {
-        let lp = pair.long_period.v1;
-        let sp = pair.short_period.v1;
         println!(
             "    M={}: long-period |v1|={:.3} km/s, short-period |v1|={:.3} km/s",
             pair.n_revs,
-            (lp[0].powi(2) + lp[1].powi(2) + lp[2].powi(2)).sqrt(),
-            (sp[0].powi(2) + sp[1].powi(2) + sp[2].powi(2)).sqrt(),
+            DVec3::from_array(pair.long_period.v1).length(),
+            DVec3::from_array(pair.short_period.v1).length(),
         );
     }
 

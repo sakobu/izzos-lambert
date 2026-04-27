@@ -3,22 +3,18 @@
 //! Run with `cargo run --release --example demo`.
 
 use core::f64::consts::PI;
+use glam::DVec3;
 use lambert_izzo::{
     LambertSolution, RevolutionBudget, TransferWay, lambert, solve_with_diagnostics,
 };
-
-const MU_EARTH: f64 = 398_600.441_8;
-const MU_SUN: f64 = 1.327_124_400_18e11;
-const AU: f64 = 1.495_978_707e8;
-
-fn norm(v: [f64; 3]) -> f64 {
-    (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()
-}
+use lambert_izzo_test_support::bodies::{AU, MU_EARTH, MU_SUN};
 
 fn print_trajectory(label: &str, s: LambertSolution) {
+    let v1 = DVec3::from_array(s.v1);
+    let v2 = DVec3::from_array(s.v2);
     println!(
         "  {label}: v1 = [{:+.6}, {:+.6}, {:+.6}] km/s  |v1| = {:.4} km/s  |v2| = {:.4} km/s",
-        s.v1[0], s.v1[1], s.v1[2], norm(s.v1), norm(s.v2),
+        v1.x, v1.y, v1.z, v1.length(), v2.length(),
     );
 }
 
@@ -92,7 +88,7 @@ fn main() {
         "  single-rev: iters={} x={:+.6}  |v1|={:.4} km/s",
         diag.single.iters,
         diag.single.lancaster_blanchard_x,
-        norm(sols.single.v1),
+        DVec3::from_array(sols.single.v1).length(),
     );
     for (pair, dpair) in sols.multi.iter().zip(diag.multi.iter()) {
         println!(
@@ -100,14 +96,14 @@ fn main() {
             pair.n_revs,
             dpair.long_period.iters,
             dpair.long_period.lancaster_blanchard_x,
-            norm(pair.long_period.v1),
+            DVec3::from_array(pair.long_period.v1).length(),
         );
         println!(
             "  M={} short-period: iters={} x={:+.6}  |v1|={:.4} km/s",
             pair.n_revs,
             dpair.short_period.iters,
             dpair.short_period.lancaster_blanchard_x,
-            norm(pair.short_period.v1),
+            DVec3::from_array(pair.short_period.v1).length(),
         );
     }
 }

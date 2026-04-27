@@ -16,3 +16,6 @@ serde = { workspace = true, features = ["derive"] }
 serde-wasm-bindgen.workspace = true
 tsify = { workspace = true, features = ["js"] }
 wasm-bindgen.workspace = true
+
+[dev-dependencies]
+lambert_izzo_test_support = { workspace = true }

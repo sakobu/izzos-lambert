@@ -387,6 +387,7 @@ dependencies = [
  "arrayvec",
  "criterion",
  "glam 0.29.3",
+ "lambert_izzo_test_support",
  "nalgebra",
  "num-traits",
  "rand",
@@ -399,10 +400,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "lambert_izzo_test_support"
+version = "0.1.0"
+dependencies = [
+ "rand",
+]
+
+[[package]]
 name = "lambert_izzo_wasm"
 version = "0.4.0"
 dependencies = [
  "lambert_izzo",
+ "lambert_izzo_test_support",
  "serde",
  "serde-wasm-bindgen",
  "tsify",

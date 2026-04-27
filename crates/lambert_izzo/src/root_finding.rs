@@ -17,7 +17,7 @@ use crate::constants::{
 };
 use crate::error::LambertError;
 use crate::geometry::Geometry;
-use crate::tof::{compute_y, tof_derivatives, x_to_tof};
+use crate::tof::{compute_y, tof_derivatives_with_y, x_to_tof_with_y};
 
 /// One converged Householder root for a given branch.
 #[derive(Debug, Clone, Copy)]
@@ -180,8 +180,9 @@ fn householder(mut x: f64, big_t: f64, lambda: f64, m: u32) -> Result<(f64, u32)
     };
     let mut last_step = f64::INFINITY;
     for it in 1..=HOUSEHOLDER_MAX_ITERS {
-        let tof = x_to_tof(x, lambda, m);
-        let (dt, ddt, dddt) = tof_derivatives(x, lambda, tof);
+        let y = compute_y(x, lambda);
+        let tof = x_to_tof_with_y(x, y, lambda, m);
+        let (dt, ddt, dddt) = tof_derivatives_with_y(x, y, lambda, tof);
         let f = tof - big_t;
         let denom = dt * (dt * dt - f * ddt) + dddt * f * f / 6.0;
         if denom == 0.0 {
@@ -207,8 +208,9 @@ fn householder(mut x: f64, big_t: f64, lambda: f64, m: u32) -> Result<(f64, u32)
 fn halley_t_min(lambda: f64, m: u32) -> (f64, f64) {
     let mut x = 0.0;
     for _ in 0..HALLEY_MAX_ITERS {
-        let tof = x_to_tof(x, lambda, m);
-        let (dt, ddt, dddt) = tof_derivatives(x, lambda, tof);
+        let y = compute_y(x, lambda);
+        let tof = x_to_tof_with_y(x, y, lambda, m);
+        let (dt, ddt, dddt) = tof_derivatives_with_y(x, y, lambda, tof);
         let denom = 2.0 * ddt * ddt - dt * dddt;
         if denom == 0.0 {
             break;
@@ -219,6 +221,6 @@ fn halley_t_min(lambda: f64, m: u32) -> (f64, f64) {
             break;
         }
     }
-    let t_min = x_to_tof(x, lambda, m);
+    let t_min = x_to_tof_with_y(x, compute_y(x, lambda), lambda, m);
     (x, t_min)
 }

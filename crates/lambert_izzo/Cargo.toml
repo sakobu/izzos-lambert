@@ -15,11 +15,6 @@ default = []
 # Adds Serialize/Deserialize derives on every public type, including
 # LambertError. Pulls in serde and arrayvec/serde.
 serde = ["dep:serde", "arrayvec/serde"]
-# Promotes the test-only Kepler propagator to a public function under
-# `lambert_izzo::test_utils::kepler_propagate`. Used by downstream
-# integration tests that want to round-trip-validate Lambert solutions
-# without re-implementing the propagator.
-test-utils = []
 # Enables `lambert_par_iter`, a parallel batch iterator backed by Rayon.
 # Pulls in `std` transitively through Rayon — incompatible with no_std.
 rayon = ["dep:rayon"]
@@ -32,9 +27,10 @@ serde = { workspace = true, features = ["derive"], optional = true }
 thiserror.workspace = true
 
 [dev-dependencies]
+lambert_izzo_test_support = { workspace = true }
 criterion = { version = "0.5", default-features = false, features = ["plotters", "html_reports"] }
+glam = { workspace = true }
 nalgebra = { workspace = true }
-glam = "0.29"
 rand = "0.8"
 rand_chacha = "0.3"
 rand_distr = "0.4"

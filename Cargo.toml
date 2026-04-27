@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/lambert_izzo",
+    "crates/lambert_izzo_test_support",
     "crates/lambert_izzo_wasm",
 ]
 resolver = "3"
@@ -12,7 +13,9 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 lambert_izzo = { path = "crates/lambert_izzo" }
+lambert_izzo_test_support = { path = "crates/lambert_izzo_test_support" }
 arrayvec = { version = "0.7", default-features = false }
+glam = "0.29"
 nalgebra = "0.34"
 num-traits = { version = "0.2", default-features = false, features = ["libm"] }
 serde = { version = "1", default-features = false }

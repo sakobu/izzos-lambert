@@ -19,12 +19,16 @@ use crate::constants::{
 };
 
 /// Evaluate `T(x, λ, M)` using the regime-appropriate formulation.
-pub(crate) fn x_to_tof(x: f64, lambda: f64, m: u32) -> f64 {
+///
+/// `y = sqrt(1 − λ²(1 − x²))` is supplied by the caller (already needed
+/// by [`tof_derivatives_with_y`] on the next line of the Householder
+/// loop) so we don't recompute it.
+pub(crate) fn x_to_tof_with_y(x: f64, y: f64, lambda: f64, m: u32) -> f64 {
     let dist = (x - 1.0).abs();
     if m == 0 && dist <= BATTIN_THRESHOLD {
-        x_to_tof_battin(x, lambda)
+        x_to_tof_battin(x, y, lambda)
     } else if dist <= LAGRANGE_THRESHOLD {
-        x_to_tof_lancaster(x, lambda, m)
+        x_to_tof_lancaster(x, y, lambda, m)
     } else {
         x_to_tof_lagrange(x, lambda, m)
     }
@@ -66,32 +70,30 @@ fn x_to_tof_lagrange(x: f64, lambda: f64, m: u32) -> f64 {
 
 /// Lancaster–Blanchard formulation (Izzo Eq. 18). Stable in the band
 /// `BATTIN_THRESHOLD < |x − 1| ≤ LAGRANGE_THRESHOLD`.
-fn x_to_tof_lancaster(x: f64, lambda: f64, m: u32) -> f64 {
-    let y = compute_y(x, lambda);
-    let one_minus_x2 = 1.0 - x * x;
-    let psi = compute_psi(x, y, lambda);
-    (((psi + f64::from(m) * PI) / one_minus_x2.abs().sqrt()) - x + lambda * y) / one_minus_x2
+fn x_to_tof_lancaster(x: f64, y: f64, lambda: f64, m: u32) -> f64 {
+    let one_m_x2 = 1.0 - x * x;
+    let psi = compute_psi(x, y, lambda, one_m_x2);
+    (((psi + f64::from(m) * PI) / one_m_x2.abs().sqrt()) - x + lambda * y) / one_m_x2
 }
 
 /// Auxiliary angle ψ (Izzo Eq. 17). `atan2` argument order is intentional —
 /// Eq. 17 of the paper defines ψ as `atan2(numerator, denominator)` with
-/// these specific terms.
-fn compute_psi(x: f64, y: f64, lambda: f64) -> f64 {
+/// these specific terms. `one_m_x2 = 1 − x²` is supplied by the caller
+/// (already needed for the Lancaster denominator) so we don't recompute it.
+fn compute_psi(x: f64, y: f64, lambda: f64, one_m_x2: f64) -> f64 {
     if x.abs() < 1.0 {
         // Elliptic regime, ψ ∈ [0, π].
-        ((y - x * lambda) * (1.0 - x * x).sqrt()).atan2(x * y + lambda * (1.0 - x * x))
+        ((y - x * lambda) * one_m_x2.sqrt()).atan2(x * y + lambda * one_m_x2)
     } else {
         // Hyperbolic regime.
-        let arg = (y - x * lambda) * (x * x - 1.0).sqrt();
-        arg.asinh()
+        ((y - x * lambda) * (-one_m_x2).sqrt()).asinh()
     }
 }
 
 /// Battin hypergeometric formulation (Izzo Eq. 20). Used near the parabolic
 /// point `x = 1`. Implicitly `M = 0` — the near-parabolic regime is
 /// single-revolution only.
-fn x_to_tof_battin(x: f64, lambda: f64) -> f64 {
-    let y = compute_y(x, lambda);
+fn x_to_tof_battin(x: f64, y: f64, lambda: f64) -> f64 {
     let eta = y - lambda * x;
     let s1 = 0.5 * (1.0 - lambda - x * eta);
     let q = (4.0 / 3.0) * hypergeometric_2f1_special(s1);
@@ -119,10 +121,15 @@ fn hypergeometric_2f1_special(z: f64) -> f64 {
 }
 
 /// Analytic derivatives `dT/dx`, `d²T/dx²`, `d³T/dx³` (Izzo Eq. 22).
-/// Consumed by the Householder iteration in [`crate::root_finding`].
+/// Consumed by the Householder iteration in [`crate::root_finding`]. `y`
+/// is supplied by the caller — see [`x_to_tof_with_y`] for the rationale.
 #[allow(clippy::similar_names)] // dt/ddt/dddt are 1st/2nd/3rd derivatives; l2/l3/l5 are λ²/λ³/λ⁵ — Izzo Eq. 22.
-pub(crate) fn tof_derivatives(x: f64, lambda: f64, tof: f64) -> (f64, f64, f64) {
-    let y = compute_y(x, lambda);
+pub(crate) fn tof_derivatives_with_y(
+    x: f64,
+    y: f64,
+    lambda: f64,
+    tof: f64,
+) -> (f64, f64, f64) {
     let one_m_x2 = 1.0 - x * x;
     let l2 = lambda * lambda;
     let l3 = l2 * lambda;
@@ -144,8 +151,9 @@ mod tests {
         let lambda = 0.4;
         let m = 1;
 
-        let got = x_to_tof(x, lambda, m);
-        let expected = x_to_tof_lancaster(x, lambda, m);
+        let y = compute_y(x, lambda);
+        let got = x_to_tof_with_y(x, y, lambda, m);
+        let expected = x_to_tof_lancaster(x, y, lambda, m);
 
         assert!(
             (got - expected).abs() < 1e-12,

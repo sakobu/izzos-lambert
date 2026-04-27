@@ -95,7 +95,7 @@ impl Geometry {
             });
         }
 
-        let chord = vec3::sub(r2, r1);
+        let chord = [r2[0] - r1[0], r2[1] - r1[1], r2[2] - r1[2]];
         let c = vec3::norm(chord);
         let s = 0.5 * (r1n + r2n + c);
 
@@ -103,9 +103,10 @@ impl Geometry {
         let ir2 = vec3::scale(r2, 1.0 / r2n);
         let ih_raw = vec3::cross(ir1, ir2);
         let sin_angle = vec3::norm(ih_raw);
-        let Some(ih) = vec3::try_normalize(ih_raw, COLINEARITY_TOL) else {
+        if sin_angle < COLINEARITY_TOL {
             return Err(LambertError::CollinearGeometry { sin_angle });
-        };
+        }
+        let ih = vec3::scale(ih_raw, 1.0 / sin_angle);
 
         // λ² = 1 − c/s, λ ∈ [-1, 1]. Default convention: prograde
         // (counter-clockwise about ih) with θ ∈ [0, π] → λ > 0.
@@ -117,8 +118,10 @@ impl Geometry {
         } else {
             (vec3::cross(ih, ir1), vec3::cross(ih, ir2))
         };
-        let it1 = vec3::normalize(it1_raw);
-        let it2 = vec3::normalize(it2_raw);
+        // |it_raw| = sin(angle between ih and ir) = 1 modulo round-off; the
+        // explicit normalize is the numerical guard.
+        let it1 = vec3::scale(it1_raw, 1.0 / vec3::norm(it1_raw));
+        let it2 = vec3::scale(it2_raw, 1.0 / vec3::norm(it2_raw));
 
         let big_t = (2.0 * mu / (s * s * s)).sqrt() * tof;
         let gamma = (mu * s / 2.0).sqrt();

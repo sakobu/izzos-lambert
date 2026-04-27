@@ -6,69 +6,35 @@
 //!
 //! Run with `cargo run --release --example stress`.
 
+use glam::DVec3;
 use lambert_izzo::{
     LambertSolution, RevolutionBudget, TransferWay, lambert, solve_with_diagnostics,
 };
+use lambert_izzo_test_support::bodies::MU_EARTH;
+use lambert_izzo_test_support::rand_unit_vec;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use rand_distr::Uniform;
 
-/// Earth's gravitational parameter (km³/s²).
-const MU_EARTH: f64 = 398_600.441_8;
-
-#[inline]
-fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-
-#[inline]
-fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
-}
-
-#[inline]
-fn norm(a: [f64; 3]) -> f64 {
-    dot(a, a).sqrt()
-}
-
-#[inline]
-fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-
-fn rand_unit_vec(rng: &mut ChaCha20Rng) -> [f64; 3] {
-    let axis: Uniform<f64> = Uniform::new(-1.0, 1.0);
-    loop {
-        let v: [f64; 3] = [rng.sample(axis), rng.sample(axis), rng.sample(axis)];
-        let n2 = dot(v, v);
-        if n2 > 0.01 && n2 < 1.0 {
-            let inv = 1.0 / n2.sqrt();
-            return [v[0] * inv, v[1] * inv, v[2] * inv];
-        }
-    }
-}
-
 fn check_conservation(r1: [f64; 3], s: LambertSolution, r2: [f64; 3], mu: f64) -> (f64, f64) {
-    let r1n = norm(r1);
-    let r2n = norm(r2);
-    let e1 = 0.5 * dot(s.v1, s.v1) - mu / r1n;
-    let e2 = 0.5 * dot(s.v2, s.v2) - mu / r2n;
+    let r1v = DVec3::from_array(r1);
+    let r2v = DVec3::from_array(r2);
+    let v1 = DVec3::from_array(s.v1);
+    let v2 = DVec3::from_array(s.v2);
+    let e1 = 0.5 * v1.dot(v1) - mu / r1v.length();
+    let e2 = 0.5 * v2.dot(v2) - mu / r2v.length();
     let e_avg = 0.5 * (e1.abs() + e2.abs()).max(1e-12);
     let e_rel = (e1 - e2).abs() / e_avg;
-    let h1 = cross(r1, s.v1);
-    let h2 = cross(r2, s.v2);
-    let h_diff = norm(sub(h1, h2));
-    let h_avg = 0.5 * (norm(h1) + norm(h2)).max(1e-12);
-    let h_rel = h_diff / h_avg;
+    let h1 = r1v.cross(v1);
+    let h2 = r2v.cross(v2);
+    let h_avg = 0.5 * (h1.length() + h2.length()).max(1e-12);
+    let h_rel = (h1 - h2).length() / h_avg;
     (e_rel, h_rel)
 }
 
-fn scale(v: [f64; 3], s: f64) -> [f64; 3] {
-    [v[0] * s, v[1] * s, v[2] * s]
+fn scaled_unit(rng: &mut ChaCha20Rng, scalar: f64) -> [f64; 3] {
+    let u = rand_unit_vec(rng);
+    [u[0] * scalar, u[1] * scalar, u[2] * scalar]
 }
 
 fn main() {
@@ -87,8 +53,9 @@ fn main() {
         let mut max_e_rel = 0.0_f64;
         let mut max_h_rel = 0.0_f64;
         for _ in 0..n_trials {
-            let r1 = scale(rand_unit_vec(&mut rng), rng.sample(radius));
-            let r2 = scale(rand_unit_vec(&mut rng), rng.sample(radius));
+            let (r1_mag, r2_mag) = (rng.sample(radius), rng.sample(radius));
+            let r1 = scaled_unit(&mut rng, r1_mag);
+            let r2 = scaled_unit(&mut rng, r2_mag);
             let tof = rng.sample(tof_dist);
             let way = if rng.gen_bool(0.5) {
                 TransferWay::Long
@@ -138,8 +105,9 @@ fn main() {
         let mut max_e_rel = 0.0_f64;
         let mut max_h_rel = 0.0_f64;
         for _ in 0..n_trials {
-            let r1 = scale(rand_unit_vec(&mut rng), rng.sample(radius));
-            let r2 = scale(rand_unit_vec(&mut rng), rng.sample(radius));
+            let (r1_mag, r2_mag) = (rng.sample(radius), rng.sample(radius));
+            let r1 = scaled_unit(&mut rng, r1_mag);
+            let r2 = scaled_unit(&mut rng, r2_mag);
             let tof = rng.sample(tof_dist);
             match solve_with_diagnostics(
                 r1,
