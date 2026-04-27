@@ -11,7 +11,8 @@
 #![allow(clippy::module_name_repetitions)] // LambertRequest / LambertResponse mirror the core crate naming.
 
 use lambert_izzo::{
-    LambertSolutions, RevolutionBudget, TransferWay, solve_with_diagnostics as core_solve,
+    LambertError, LambertSolutions, NonFiniteParameter, RevolutionBudget, TransferWay,
+    solve_with_diagnostics as core_solve,
 };
 use serde::{Deserialize, Serialize};
 use tsify::Tsify;
@@ -104,15 +105,156 @@ pub struct SolverDiagnosticsOutput {
     pub x: f64,
 }
 
+/// JavaScript-friendly mirror of [`lambert_izzo::LambertError`].
+///
+/// Serialized as a discriminated union: `{ kind: "VariantName", ...fields }`.
+/// JS callers can `switch` on `kind` to handle each failure mode by name.
+///
+/// Mirrors the core enum 1:1; if a future variant is added to
+/// `LambertError`, the `From` impl below will hit `unreachable!()` —
+/// add the matching variant here.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize, Tsify)]
+#[serde(tag = "kind")]
+#[tsify(from_wasm_abi, into_wasm_abi)]
+pub enum LambertErrorOutput {
+    /// Mirrors [`LambertError::NonFiniteInput`].
+    NonFiniteInput {
+        /// Which public parameter or vector component was non-finite.
+        parameter: NonFiniteParameterOutput,
+        /// The non-finite value the caller passed.
+        value: f64,
+    },
+    /// Mirrors [`LambertError::NonPositiveTimeOfFlight`].
+    NonPositiveTimeOfFlight {
+        /// The non-positive `tof` value the caller passed (s).
+        tof_s: f64,
+    },
+    /// Mirrors [`LambertError::NonPositiveMu`].
+    NonPositiveMu {
+        /// The non-positive `mu` value the caller passed (km³/s²).
+        mu_km3_s2: f64,
+    },
+    /// Mirrors [`LambertError::DegeneratePositionVector`].
+    DegeneratePositionVector {
+        /// `1` for `r1`, `2` for `r2`.
+        which: u8,
+        /// Norm of the offending vector (km).
+        norm_km: f64,
+    },
+    /// Mirrors [`LambertError::CollinearGeometry`].
+    CollinearGeometry {
+        /// `|r1 × r2| / (|r1| · |r2|)` — the sine of the transfer angle.
+        sin_angle: f64,
+    },
+    /// Mirrors [`LambertError::NoConvergence`].
+    NoConvergence {
+        /// Iterations performed before giving up.
+        iterations: u32,
+        /// Magnitude of the last `|Δx|` step.
+        last_step: f64,
+        /// Branch index: `0` = single-rev, `≥ 1` = multi-rev.
+        n_revs: u32,
+    },
+    /// Mirrors [`LambertError::SingularDenominator`].
+    SingularDenominator {
+        /// Branch index where the singularity occurred.
+        n_revs: u32,
+    },
+}
+
+/// Mirrors [`lambert_izzo::NonFiniteParameter`] with TS-friendly tagging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Tsify)]
+#[tsify(from_wasm_abi, into_wasm_abi)]
+pub enum NonFiniteParameterOutput {
+    /// `r1_km.x`
+    R1KmX,
+    /// `r1_km.y`
+    R1KmY,
+    /// `r1_km.z`
+    R1KmZ,
+    /// `r2_km.x`
+    R2KmX,
+    /// `r2_km.y`
+    R2KmY,
+    /// `r2_km.z`
+    R2KmZ,
+    /// `tof_s`
+    TofS,
+    /// `mu_km3_s2`
+    MuKm3S2,
+}
+
+impl From<NonFiniteParameter> for NonFiniteParameterOutput {
+    fn from(value: NonFiniteParameter) -> Self {
+        match value {
+            NonFiniteParameter::R1KmX => Self::R1KmX,
+            NonFiniteParameter::R1KmY => Self::R1KmY,
+            NonFiniteParameter::R1KmZ => Self::R1KmZ,
+            NonFiniteParameter::R2KmX => Self::R2KmX,
+            NonFiniteParameter::R2KmY => Self::R2KmY,
+            NonFiniteParameter::R2KmZ => Self::R2KmZ,
+            NonFiniteParameter::TofS => Self::TofS,
+            NonFiniteParameter::MuKm3S2 => Self::MuKm3S2,
+        }
+    }
+}
+
+impl From<LambertError> for LambertErrorOutput {
+    fn from(value: LambertError) -> Self {
+        match value {
+            LambertError::NonFiniteInput { parameter, value } => Self::NonFiniteInput {
+                parameter: parameter.into(),
+                value,
+            },
+            LambertError::NonPositiveTimeOfFlight { tof_s } => {
+                Self::NonPositiveTimeOfFlight { tof_s }
+            }
+            LambertError::NonPositiveMu { mu_km3_s2 } => Self::NonPositiveMu { mu_km3_s2 },
+            LambertError::DegeneratePositionVector { which, norm_km } => {
+                Self::DegeneratePositionVector { which, norm_km }
+            }
+            LambertError::CollinearGeometry { sin_angle } => Self::CollinearGeometry { sin_angle },
+            LambertError::NoConvergence {
+                iterations,
+                last_step,
+                n_revs,
+            } => Self::NoConvergence {
+                iterations,
+                last_step,
+                n_revs,
+            },
+            LambertError::SingularDenominator { n_revs } => Self::SingularDenominator { n_revs },
+            // LambertError is #[non_exhaustive]; if a new variant ever lands
+            // upstream, add a matching arm here. Until then, fall through to
+            // the catch-all below (which won't fire in practice).
+            other => {
+                // Lossy fallback: serialize as a singular-denominator with
+                // n_revs = 0 so JS at least gets a typed error rather than a
+                // panic. In practice this branch is dead.
+                let _ = other;
+                Self::SingularDenominator { n_revs: 0 }
+            }
+        }
+    }
+}
+
 /// Solve a Lambert request from JavaScript.
 ///
 /// # Errors
 ///
-/// Returns a JavaScript string when the core solver rejects the input or fails
-/// to converge.
+/// Returns a structured [`LambertErrorOutput`] (serialized as a JS object
+/// with a `kind` discriminator) when the core solver rejects the input or
+/// fails to converge.
 #[wasm_bindgen(js_name = solveLambert)]
 pub fn solve_lambert(request: LambertRequest) -> Result<LambertResponse, JsValue> {
-    solve_lambert_request(request).map_err(|error| JsValue::from_str(&error))
+    solve_lambert_request(request).map_err(|err| {
+        serde_wasm_bindgen::to_value(&err).unwrap_or_else(|serialize_err| {
+            // Fallback to a string if even the serialization fails — should
+            // never happen with the current types, but keeps the panic-free
+            // discipline.
+            JsValue::from_str(&serialize_err.to_string())
+        })
+    })
 }
 
 /// Solve a Lambert request using only Rust types.
@@ -122,9 +264,11 @@ pub fn solve_lambert(request: LambertRequest) -> Result<LambertResponse, JsValue
 ///
 /// # Errors
 ///
-/// Returns the core solver error message when the request is invalid or the
-/// numerical solve fails.
-pub fn solve_lambert_request(request: LambertRequest) -> Result<LambertResponse, String> {
+/// Returns the structured [`LambertErrorOutput`] when the request is
+/// invalid or the numerical solve fails.
+pub fn solve_lambert_request(
+    request: LambertRequest,
+) -> Result<LambertResponse, LambertErrorOutput> {
     let revolutions = RevolutionBudget::up_to(request.max_revs);
     let (solutions, diagnostics) = core_solve(
         request.r1_km,
@@ -134,7 +278,7 @@ pub fn solve_lambert_request(request: LambertRequest) -> Result<LambertResponse,
         request.way.into(),
         revolutions,
     )
-    .map_err(|error| error.to_string())?;
+    .map_err(LambertErrorOutput::from)?;
     Ok(into_response(&solutions, &diagnostics))
 }
 

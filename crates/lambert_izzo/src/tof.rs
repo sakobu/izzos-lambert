@@ -10,6 +10,10 @@
 
 use core::f64::consts::PI;
 
+// See `vec3.rs` for the rationale on this `allow(unused_imports)`.
+#[allow(unused_imports)]
+use num_traits::Float as _;
+
 use crate::constants::{
     BATTIN_THRESHOLD, HYPERGEOMETRIC_2F1_MAX_TERMS, HYPERGEOMETRIC_2F1_TOL, LAGRANGE_THRESHOLD,
 };

@@ -4,8 +4,12 @@
 //! root-finding and velocity-reconstruction stages — eliminates re-derivation
 //! drift across modules.
 
+// See `vec3.rs` for the rationale on this `allow(unused_imports)`.
+#[allow(unused_imports)]
+use num_traits::Float as _;
+
 use crate::constants::{COLINEARITY_TOL, MIN_POSITION_NORM_KM};
-use crate::error::LambertError;
+use crate::error::{LambertError, NonFiniteParameter};
 use crate::vec3::{self, Vec3};
 
 /// Pre-computed geometry for a Lambert boundary problem.
@@ -64,10 +68,10 @@ impl Geometry {
         mu_km3_s2: f64,
         way: crate::TransferWay,
     ) -> Result<Self, LambertError> {
-        validate_finite_vector("r1_km", r1_km)?;
-        validate_finite_vector("r2_km", r2_km)?;
-        validate_finite_scalar("tof_s", tof_s)?;
-        validate_finite_scalar("mu_km3_s2", mu_km3_s2)?;
+        validate_finite_r1(r1_km)?;
+        validate_finite_r2(r2_km)?;
+        validate_finite_scalar(NonFiniteParameter::TofS, tof_s)?;
+        validate_finite_scalar(NonFiniteParameter::MuKm3S2, mu_km3_s2)?;
 
         if tof_s <= 0.0 {
             return Err(LambertError::NonPositiveTimeOfFlight { tof_s });
@@ -137,7 +141,7 @@ impl Geometry {
     }
 }
 
-fn validate_finite_scalar(parameter: &'static str, value: f64) -> Result<(), LambertError> {
+fn validate_finite_scalar(parameter: NonFiniteParameter, value: f64) -> Result<(), LambertError> {
     if value.is_finite() {
         Ok(())
     } else {
@@ -145,20 +149,14 @@ fn validate_finite_scalar(parameter: &'static str, value: f64) -> Result<(), Lam
     }
 }
 
-fn validate_finite_vector(prefix: &'static str, value: Vec3) -> Result<(), LambertError> {
-    validate_finite_scalar(component_name(prefix, "x"), value[0])?;
-    validate_finite_scalar(component_name(prefix, "y"), value[1])?;
-    validate_finite_scalar(component_name(prefix, "z"), value[2])
+fn validate_finite_r1(value: Vec3) -> Result<(), LambertError> {
+    validate_finite_scalar(NonFiniteParameter::R1KmX, value[0])?;
+    validate_finite_scalar(NonFiniteParameter::R1KmY, value[1])?;
+    validate_finite_scalar(NonFiniteParameter::R1KmZ, value[2])
 }
 
-fn component_name(prefix: &'static str, component: &'static str) -> &'static str {
-    match (prefix, component) {
-        ("r1_km", "x") => "r1_km.x",
-        ("r1_km", "y") => "r1_km.y",
-        ("r1_km", "z") => "r1_km.z",
-        ("r2_km", "x") => "r2_km.x",
-        ("r2_km", "y") => "r2_km.y",
-        ("r2_km", "z") => "r2_km.z",
-        _ => prefix,
-    }
+fn validate_finite_r2(value: Vec3) -> Result<(), LambertError> {
+    validate_finite_scalar(NonFiniteParameter::R2KmX, value[0])?;
+    validate_finite_scalar(NonFiniteParameter::R2KmY, value[1])?;
+    validate_finite_scalar(NonFiniteParameter::R2KmZ, value[2])
 }

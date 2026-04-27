@@ -1,5 +1,54 @@
 //! Error type returned by [`crate::lambert`].
 
+/// Identifies which public input was rejected by the finiteness check.
+///
+/// A typed alternative to a free-form `&'static str`, so the error type
+/// stays `Deserialize`-friendly under the `serde` feature without falling
+/// back to allocated strings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum NonFiniteParameter {
+    /// `r1_km.x`
+    R1KmX,
+    /// `r1_km.y`
+    R1KmY,
+    /// `r1_km.z`
+    R1KmZ,
+    /// `r2_km.x`
+    R2KmX,
+    /// `r2_km.y`
+    R2KmY,
+    /// `r2_km.z`
+    R2KmZ,
+    /// `tof_s`
+    TofS,
+    /// `mu_km3_s2`
+    MuKm3S2,
+}
+
+impl NonFiniteParameter {
+    /// String name of the offending parameter, matching the public API name.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::R1KmX => "r1_km.x",
+            Self::R1KmY => "r1_km.y",
+            Self::R1KmZ => "r1_km.z",
+            Self::R2KmX => "r2_km.x",
+            Self::R2KmY => "r2_km.y",
+            Self::R2KmZ => "r2_km.z",
+            Self::TofS => "tof_s",
+            Self::MuKm3S2 => "mu_km3_s2",
+        }
+    }
+}
+
+impl core::fmt::Display for NonFiniteParameter {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Failure modes of the Izzo Lambert solver.
 ///
 /// Field units follow the crate's SI convention: `_km` for lengths, `_s` for
@@ -7,12 +56,13 @@
 /// (`sin_angle`, `last_step` — Izzo's dimensionless `x`-step) carry no suffix.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum LambertError {
     /// One public input was `NaN`, `+inf`, or `-inf`.
     #[error("non-finite input: {parameter} = {value}")]
     NonFiniteInput {
-        /// Name of the offending public parameter or vector component.
-        parameter: &'static str,
+        /// Which public parameter or vector component was non-finite.
+        parameter: NonFiniteParameter,
         /// The non-finite value the caller passed.
         value: f64,
     },

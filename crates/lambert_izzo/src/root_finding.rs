@@ -6,6 +6,10 @@
 use arrayvec::ArrayVec;
 use core::f64::consts::PI;
 
+// See `vec3.rs` for the rationale on this `allow(unused_imports)`.
+#[allow(unused_imports)]
+use num_traits::Float as _;
+
 use crate::MAX_MULTI_REV_PAIRS;
 use crate::constants::{
     HALLEY_MAX_ITERS, HALLEY_TOL, HOUSEHOLDER_MAX_ITERS, HOUSEHOLDER_TOL_MULTI,

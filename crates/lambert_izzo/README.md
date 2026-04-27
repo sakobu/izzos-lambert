@@ -15,8 +15,19 @@ Supports:
   is the caller's choice via the `(r1, r2)` ordering, since
   `r1 × r2` defines the resulting orbit's angular-momentum direction
 - Hyperbolic transfers on the single-rev branch
-- WASM-compatible math kernel (`cargo build --target wasm32-unknown-unknown --lib`)
+- `no_std`-friendly — pulls only `arrayvec`, `num-traits` (with `libm`), and
+  `thiserror` (`std`-feature off) at runtime
+- WASM-compatible math kernel (`cargo build --target wasm32-unknown-unknown --no-default-features --lib`)
 - Zero hard math-library dependency — public surface is `[f64; 3]`
+
+## Features
+
+| Feature      | Default | Effect                                                                                                |
+| ------------ | ------- | ----------------------------------------------------------------------------------------------------- |
+| `serde`      | off     | Adds `Serialize`/`Deserialize` derives on every public type, including `LambertError`.               |
+| `test-utils` | off     | Promotes the universal-variable Kepler propagator to `lambert_izzo::test_utils::kepler_propagate` so downstream integration tests can round-trip-validate Lambert solutions without re-implementing it. |
+
+MSRV: **Rust 1.85** (the first release with edition 2024 stable).
 
 ## Units
 
@@ -167,10 +178,12 @@ cargo run --release --example demo
 cargo run --release --example stress
 ```
 
-Toolchain pinned via `rust-toolchain.toml` (1.88.0). Edition 2024.
-Single hard runtime dependency: [`thiserror`](https://docs.rs/thiserror) for
-the error type. [`arrayvec`](https://docs.rs/arrayvec) provides the
-stack-allocated multi-rev container.
+Toolchain pinned via `rust-toolchain.toml` (1.88.0) for development; MSRV
+declared in `Cargo.toml` is 1.85. Edition 2024. Runtime dependencies are
+[`thiserror`](https://docs.rs/thiserror) (no_std mode) for the error type,
+[`arrayvec`](https://docs.rs/arrayvec) (no_std) for the bounded multi-rev
+return, and [`num-traits`](https://docs.rs/num-traits) (with `libm`) for
+`no_std` math.
 
 ## Implementation notes
 

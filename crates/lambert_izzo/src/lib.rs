@@ -60,6 +60,7 @@
 //! # }
 //! ```
 
+#![cfg_attr(not(test), no_std)]
 #![warn(missing_docs)]
 #![warn(clippy::pedantic)]
 #![warn(
@@ -89,6 +90,7 @@ pub const MAX_MULTI_REV_PAIRS: usize = 32;
 /// way (`θ > π`). This is independent of prograde/retrograde — the orbit's
 /// angular-momentum direction is set by the order of the `(r1, r2)` arguments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TransferWay {
     /// `θ ≤ π` — the short geodesic arc.
     Short,
@@ -104,6 +106,7 @@ pub enum TransferWay {
 /// exceeds the requested time of flight, and clamped at
 /// [`MAX_MULTI_REV_PAIRS`] regardless of the requested value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum RevolutionBudget {
     /// Solve the single-revolution case only — always exactly one solution.
     SingleOnly,
@@ -138,10 +141,20 @@ mod root_finding;
 mod tof;
 mod vec3;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 mod test_helpers;
 
-pub use error::LambertError;
+/// Test utilities exposed under the `test-utils` feature.
+///
+/// Currently a universal-variable Kepler propagator suitable for
+/// round-trip-validating Lambert solutions in downstream integration
+/// tests, so callers don't have to re-implement Stumpff functions.
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils {
+    pub use super::test_helpers::kepler_propagate;
+}
+
+pub use error::{LambertError, NonFiniteParameter};
 
 use geometry::Geometry;
 use root_finding::{Root, find_xy};
@@ -153,6 +166,7 @@ use root_finding::{Root, find_xy};
 /// the common API path is lean; use [`solve_with_diagnostics`] when you
 /// need them.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LambertSolution {
     /// Velocity at `r1_km` (km/s, same inertial frame as the inputs).
     pub v1_km_s: [f64; 3],
@@ -167,6 +181,7 @@ pub struct LambertSolution {
 /// the long-period branch (smaller `x`, more time near apoapsis) and the
 /// short-period branch (larger `x`, more time near periapsis).
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MultiRevPair {
     /// Branch revolution count (`>= 1`).
     pub n_revs: u32,
@@ -182,6 +197,7 @@ pub struct MultiRevPair {
 /// reachable multi-rev pair in ascending `M` order, capped at
 /// [`MAX_MULTI_REV_PAIRS`].
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LambertSolutions {
     /// Single-revolution trajectory — always present.
     pub single: LambertSolution,
@@ -197,6 +213,7 @@ pub struct LambertSolutions {
 /// either one may be empty in `multi` while the other is populated, since
 /// `T_min(M)` differs between the short and long forms.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BothWaysSolutions {
     /// Short-way trajectories (`θ ≤ π`).
     pub short: LambertSolutions,
@@ -209,6 +226,7 @@ pub struct BothWaysSolutions {
 /// Useful for debugging or distinguishing multi-rev branches; not part of
 /// the trajectory answer. Returned by [`solve_with_diagnostics`].
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SolverDiagnostics {
     /// Householder iterations used to converge.
     pub iters: u32,
@@ -220,6 +238,7 @@ pub struct SolverDiagnostics {
 
 /// Diagnostics for one multi-rev pair.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MultiRevPairDiagnostics {
     /// Branch revolution count (`>= 1`).
     pub n_revs: u32,
@@ -233,6 +252,7 @@ pub struct MultiRevPairDiagnostics {
 ///
 /// Returned alongside the solutions by [`solve_with_diagnostics`].
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LambertDiagnostics {
     /// Single-rev solver diagnostics.
     pub single: SolverDiagnostics,
@@ -656,7 +676,7 @@ mod tests {
         assert!(matches!(
             err,
             LambertError::NonFiniteInput {
-                parameter: "tof_s",
+                parameter: NonFiniteParameter::TofS,
                 ..
             }
         ));
@@ -673,7 +693,7 @@ mod tests {
         assert!(matches!(
             err,
             LambertError::NonFiniteInput {
-                parameter: "r1_km.y",
+                parameter: NonFiniteParameter::R1KmY,
                 ..
             }
         ));
@@ -813,6 +833,36 @@ mod tests {
             assert!(pair.n_revs > prev_m, "M strictly ascending across pairs");
             prev_m = pair.n_revs;
         }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_json_round_trip_preserves_solutions_and_errors() {
+        // Solutions round-trip.
+        let mu = MU_EARTH_KM3_S2;
+        let r1_km = [8000.0, 0.0, 0.0];
+        let r2_km = [5600.0, 5600.0, 0.0];
+        let period_s = 2.0 * PI * (8000.0_f64.powi(3) / mu).sqrt();
+        let sols = lambert(
+            r1_km,
+            r2_km,
+            5.0 * period_s,
+            mu,
+            TransferWay::Short,
+            RevolutionBudget::up_to(2),
+        )
+        .unwrap();
+        let json = serde_json::to_string(&sols).unwrap();
+        let back: LambertSolutions = serde_json::from_str(&json).unwrap();
+        assert_eq!(sols, back);
+        assert!(!sols.multi.is_empty(), "test should exercise multi-rev branches");
+
+        // Error round-trip — discriminated union via the `kind` tag.
+        let err = LambertError::CollinearGeometry { sin_angle: 1e-20 };
+        let err_json = serde_json::to_string(&err).unwrap();
+        assert!(err_json.contains("CollinearGeometry"));
+        let err_back: LambertError = serde_json::from_str(&err_json).unwrap();
+        assert_eq!(err, err_back);
     }
 
     #[test]

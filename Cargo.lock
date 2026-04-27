@@ -16,6 +16,9 @@ name = "arrayvec"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "autocfg"
@@ -191,20 +194,23 @@ dependencies = [
 
 [[package]]
 name = "lambert_izzo"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "arrayvec",
  "glam 0.29.3",
  "nalgebra",
+ "num-traits",
  "rand",
  "rand_chacha",
  "rand_distr",
+ "serde",
+ "serde_json",
  "thiserror",
 ]
 
 [[package]]
 name = "lambert_izzo_wasm"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "lambert_izzo",
  "serde",

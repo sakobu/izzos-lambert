@@ -6,6 +6,10 @@
 //! Inputs follow the same SI convention as the public Lambert API
 //! (`r0_km`, `v0_km_s`, `dt_s`, `mu_km3_s2`).
 
+// See `vec3.rs` for the rationale on this `allow(unused_imports)`.
+#[allow(unused_imports)]
+use num_traits::Float as _;
+
 use crate::vec3::{self, Vec3};
 
 /// Newton-iteration cap on the universal Kepler equation. Well above the
@@ -40,7 +44,13 @@ const STUMPFF_SERIES_THRESHOLD: f64 = 1e-6;
 /// (e.g. on near-parabolic geometries where the simple `χ₀ = √μ·dt·|α|`
 /// initial guess is too poor to recover). Callers in statistical tests
 /// filter divergent trials by checking componentwise finiteness.
-pub(crate) fn kepler_propagate(r0_km: Vec3, v0_km_s: Vec3, dt_s: f64, mu_km3_s2: f64) -> Vec3 {
+#[must_use]
+pub fn kepler_propagate(
+    r0_km: [f64; 3],
+    v0_km_s: [f64; 3],
+    dt_s: f64,
+    mu_km3_s2: f64,
+) -> [f64; 3] {
     let r0n = vec3::norm(r0_km);
     let v0n2 = vec3::norm_squared(v0_km_s);
     let alpha = 2.0 / r0n - v0n2 / mu_km3_s2; // 1/a

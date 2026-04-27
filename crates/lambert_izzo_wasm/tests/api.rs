@@ -1,4 +1,7 @@
-use lambert_izzo_wasm::{LambertRequest, TransferWayInput, solve_lambert_request};
+use lambert_izzo_wasm::{
+    LambertErrorOutput, LambertRequest, NonFiniteParameterOutput, TransferWayInput,
+    solve_lambert_request,
+};
 
 #[test]
 fn single_rev_request_returns_js_friendly_vectors() {
@@ -22,7 +25,7 @@ fn single_rev_request_returns_js_friendly_vectors() {
 }
 
 #[test]
-fn invalid_request_returns_error_string() {
+fn invalid_request_returns_structured_error() {
     let request = LambertRequest {
         r1_km: [0.0, 0.0, 0.0],
         r2_km: [0.0, 7000.0, 0.0],
@@ -34,5 +37,31 @@ fn invalid_request_returns_error_string() {
 
     let error = solve_lambert_request(request).unwrap_err();
 
-    assert!(error.contains("degenerate position vector r1"));
+    // Caller can pattern-match the variant directly — no string parsing.
+    assert!(matches!(
+        error,
+        LambertErrorOutput::DegeneratePositionVector { which: 1, .. }
+    ));
+}
+
+#[test]
+fn non_finite_input_carries_typed_parameter() {
+    let request = LambertRequest {
+        r1_km: [7000.0, f64::INFINITY, 0.0],
+        r2_km: [0.0, 7000.0, 0.0],
+        tof_s: 1000.0,
+        mu_km3_s2: 398_600.441_8,
+        way: TransferWayInput::Short,
+        max_revs: 0,
+    };
+
+    let error = solve_lambert_request(request).unwrap_err();
+
+    assert!(matches!(
+        error,
+        LambertErrorOutput::NonFiniteInput {
+            parameter: NonFiniteParameterOutput::R1KmY,
+            ..
+        }
+    ));
 }
