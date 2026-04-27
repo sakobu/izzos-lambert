@@ -1,23 +1,23 @@
-[package]
-name = "lambert_izzo"
-version = "0.2.0"
+[workspace]
+members = [
+    "crates/lambert_izzo",
+    "crates/lambert_izzo_wasm",
+]
+resolver = "3"
+
+[workspace.package]
 edition = "2024"
 rust-version = "1.88"
-description = "Izzo's revisited Lambert solver (single & multi-rev, short & long way)"
 license = "MIT OR Apache-2.0"
-readme = "README.md"
-documentation = "https://docs.rs/lambert_izzo"
-keywords = ["astrodynamics", "lambert", "orbital-mechanics", "izzo"]
-categories = ["science", "aerospace"]
 
-[dependencies]
+[workspace.dependencies]
+lambert_izzo = { path = "crates/lambert_izzo" }
 nalgebra = "0.34"
+serde = "1"
+serde-wasm-bindgen = "0.6"
 thiserror = "2"
-
-[dev-dependencies]
-rand = "0.8"
-rand_chacha = "0.3"
-rand_distr = "0.4"
+tsify = "0.5"
+wasm-bindgen = "0.2"
 
 [profile.release]
 opt-level = 3

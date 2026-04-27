@@ -1,0 +1,19 @@
+[package]
+name = "lambert_izzo_wasm"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "WASM bindings for the lambert_izzo solver"
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+lambert_izzo.workspace = true
+nalgebra.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde-wasm-bindgen.workspace = true
+tsify = { workspace = true, features = ["js"] }
+wasm-bindgen.workspace = true

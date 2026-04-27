@@ -15,5 +15,4 @@
 .DS_Store
 Thumbs.db
 
-# Local-only assistant rules — never committed
-CLAUDE.md
+
