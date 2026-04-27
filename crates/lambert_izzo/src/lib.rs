@@ -260,6 +260,74 @@ pub struct LambertDiagnostics {
     pub multi: ArrayVec<MultiRevPairDiagnostics, MAX_MULTI_REV_PAIRS>,
 }
 
+/// One Lambert call's inputs, packaged for batch processing.
+///
+/// Same fields as [`lambert`]'s parameter list, in struct form so callers
+/// can build a slice (e.g. for porkchop plots) and stream it through
+/// [`lambert_iter`] or [`lambert_par_iter`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct LambertInput {
+    /// Initial position (km), any consistent inertial frame.
+    pub r1_km: [f64; 3],
+    /// Final position (km), same frame as `r1_km`.
+    pub r2_km: [f64; 3],
+    /// Time of flight (s), `> 0`.
+    pub tof_s: f64,
+    /// Gravitational parameter (km³/s²), `> 0`.
+    pub mu_km3_s2: f64,
+    /// Short or long way around the transfer plane.
+    pub way: TransferWay,
+    /// Revolution budget — see [`RevolutionBudget`].
+    pub revolutions: RevolutionBudget,
+}
+
+impl LambertInput {
+    /// Solve this single input — convenience wrapper around [`lambert`].
+    ///
+    /// # Errors
+    ///
+    /// Same conditions as [`lambert`].
+    pub fn solve(self) -> Result<LambertSolutions, LambertError> {
+        lambert(
+            self.r1_km,
+            self.r2_km,
+            self.tof_s,
+            self.mu_km3_s2,
+            self.way,
+            self.revolutions,
+        )
+    }
+}
+
+/// Sequential batch iterator over Lambert inputs.
+///
+/// Allocation-free; just maps over the input slice. Useful for
+/// porkchop-plot-style workloads where the caller computes one Lambert
+/// solution per `(departure, arrival)` cell. Each yielded `Result` is
+/// independent — one input failing doesn't poison the rest.
+///
+/// For parallel evaluation, enable the `rayon` feature and use
+/// [`lambert_par_iter`].
+pub fn lambert_iter(
+    inputs: &[LambertInput],
+) -> impl Iterator<Item = Result<LambertSolutions, LambertError>> + '_ {
+    inputs.iter().map(|input| input.solve())
+}
+
+/// Parallel batch iterator over Lambert inputs (Rayon-backed).
+///
+/// Same semantics as [`lambert_iter`], but evaluates inputs concurrently
+/// across the Rayon thread pool. Available under the `rayon` feature.
+#[cfg(feature = "rayon")]
+#[allow(clippy::must_use_candidate)] // Rayon's ParallelIterator isn't #[must_use]; the caller is expected to chain `.for_each` / `.collect`.
+pub fn lambert_par_iter(
+    inputs: &[LambertInput],
+) -> impl rayon::iter::ParallelIterator<Item = Result<LambertSolutions, LambertError>> + '_ {
+    use rayon::prelude::*;
+    inputs.par_iter().map(|input| input.solve())
+}
+
 /// Solve Lambert's boundary-value problem using Izzo's revisited algorithm.
 ///
 /// Householder iteration over Lancaster's free parameter `x`, dispatching

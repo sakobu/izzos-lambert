@@ -26,6 +26,7 @@ Supports:
 | ------------ | ------- | ----------------------------------------------------------------------------------------------------- |
 | `serde`      | off     | Adds `Serialize`/`Deserialize` derives on every public type, including `LambertError`.               |
 | `test-utils` | off     | Promotes the universal-variable Kepler propagator to `lambert_izzo::test_utils::kepler_propagate` so downstream integration tests can round-trip-validate Lambert solutions without re-implementing it. |
+| `rayon`      | off     | Enables `lambert_par_iter` for parallel batch evaluation. Pulls in `std` transitively — incompatible with `no_std`. |
 
 MSRV: **Rust 1.85** (the first release with edition 2024 stable).
 
@@ -168,6 +169,54 @@ pair. Random ranges:
 | Multi-rev  | 100%        | 2.992     | 3.3       | 7         | 3.00e-14 | 1.37e-13 |
 
 Iteration counts match the paper's reported figures.
+
+## Performance
+
+Criterion benchmarks under `crates/lambert_izzo/benches/`. Numbers below
+are from an Apple Silicon laptop (release profile, single thread except
+for the parallel batch row).
+
+| Workload                                    | Throughput       | Per call |
+| ------------------------------------------- | ---------------- | -------- |
+| Single-rev (random Earth orbits)            | ~2.7 M calls/s   | ~360 ns  |
+| Multi-rev `M=3` (Earth orbits)              | ~735 K calls/s   | ~1.4 µs  |
+| Sequential batch via `lambert_iter`         | ~1.1 M calls/s   | ~900 ns  |
+| Parallel batch via `lambert_par_iter` (rayon) | ~8.6 M calls/s   | ~116 ns  |
+
+The parallel batch shows ~7.7× speedup over sequential on this machine.
+Reproduce with:
+
+```
+cargo bench --bench single_rev
+cargo bench --bench multi_rev
+cargo bench --bench batch --features rayon
+```
+
+## Batch / streaming API
+
+For porkchop plots, multi-shooter loops, or any workload with thousands
+of Lambert calls, `lambert_iter` and (under the `rayon` feature)
+`lambert_par_iter` map a slice of `LambertInput`:
+
+```rust
+use lambert_izzo::{LambertInput, RevolutionBudget, TransferWay, lambert_iter};
+
+let inputs: Vec<LambertInput> = (0..10_000)
+    .map(|_| LambertInput { /* … */ # r1_km: [7000.0, 0.0, 0.0],
+        # r2_km: [0.0, 7000.0, 0.0], tof_s: 1500.0,
+        # mu_km3_s2: 398_600.4418, way: TransferWay::Short,
+        # revolutions: RevolutionBudget::SingleOnly,
+    })
+    .collect();
+
+let total_dv: f64 = lambert_iter(&inputs)
+    .filter_map(Result::ok)
+    .map(|sols| sols.single.v1_km_s[0].abs())
+    .sum();
+```
+
+With `--features rayon`, swap `lambert_iter` for `lambert_par_iter` and
+the work fans out across the thread pool.
 
 ## Building
 

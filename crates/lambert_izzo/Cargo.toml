@@ -20,14 +20,19 @@ serde = ["dep:serde", "arrayvec/serde"]
 # integration tests that want to round-trip-validate Lambert solutions
 # without re-implementing the propagator.
 test-utils = []
+# Enables `lambert_par_iter`, a parallel batch iterator backed by Rayon.
+# Pulls in `std` transitively through Rayon — incompatible with no_std.
+rayon = ["dep:rayon"]
 
 [dependencies]
 arrayvec = { workspace = true }
 num-traits = { workspace = true }
+rayon = { version = "1", optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
 thiserror.workspace = true
 
 [dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["plotters", "html_reports"] }
 nalgebra = { workspace = true }
 glam = "0.29"
 rand = "0.8"
@@ -35,3 +40,15 @@ rand_chacha = "0.3"
 rand_distr = "0.4"
 serde = { workspace = true, features = ["derive"] }
 serde_json = "1"
+
+[[bench]]
+name = "single_rev"
+harness = false
+
+[[bench]]
+name = "multi_rev"
+harness = false
+
+[[bench]]
+name = "batch"
+harness = false
