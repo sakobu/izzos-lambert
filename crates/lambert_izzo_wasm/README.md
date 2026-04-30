@@ -14,8 +14,9 @@ npm install lambert-izzo
 
 Works with bundlers (Vite, webpack, Rollup), browser ES modules, and
 Node.js. The npm package is built with
-[`wasm-pack`](https://rustwasm.github.io/wasm-pack/) targeting `bundler`;
-see [Building from source](#building-from-source) for the other targets.
+[`wasm-pack`](https://rustwasm.github.io/docs/wasm-pack/) targeting
+`bundler`; see [Building from source](#building-from-source) for the
+other targets.
 
 ## Usage
 

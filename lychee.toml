@@ -1,0 +1,9 @@
+# Exclude loopback / localhost addresses — the web demo README documents
+# `http://localhost:8000/` as a local-dev URL that is never reachable from CI.
+exclude_loopback = true
+
+# npmjs.com responds 403 to non-browser HEAD/GET from GitHub Actions runners
+# even though the package page exists. Well-known lychee false positive.
+exclude = [
+    "^https://www\\.npmjs\\.com/",
+]
