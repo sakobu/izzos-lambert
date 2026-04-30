@@ -7,7 +7,39 @@ it reaches `1.0`.
 
 ## [Unreleased]
 
-(no changes since `1.0.0`)
+### Type-enforced revolution cap (breaking)
+
+The `MAX_MULTI_REV_PAIRS = 32` cap on multi-rev pairs is now type-level
+rather than enforced by silent runtime clamping.
+
+- **New `BoundedRevs` type** — newtype around `NonZeroU32` constrained to
+  `1..=BoundedRevs::MAX`. Constructed via `BoundedRevs::try_new(u32) ->
+  Result<Self, RevsOutOfRange>`. The MAX constant is statically asserted
+  to match `MAX_MULTI_REV_PAIRS`.
+- **`RevolutionBudget::UpTo` now wraps `BoundedRevs`** (was
+  `NonZeroU32`).
+- **`RevolutionBudget::up_to`** changed signature: takes
+  `BoundedRevs` (total), no longer takes `u32` and silently collapses
+  `0` to `SingleOnly`. Passing `0` was always a footgun.
+- **New `RevolutionBudget::try_up_to(u32) -> Result<Self,
+  RevsOutOfRange>`** — ergonomic fallible constructor for the common
+  case (literal or external `u32`). Use `RevolutionBudget::SingleOnly`
+  directly to skip multi-rev.
+- **New `RevsOutOfRange` error type** — standalone, `thiserror::Error`,
+  serde-compatible. Distinct from `LambertError` because it represents
+  construction-time validation, not solver-runtime failure.
+- **Kernel simplified** — the `m_max.min(MAX_MULTI_REV_PAIRS)` clamp in
+  `find_xy` is gone; the type now carries the invariant.
+
+### WASM adapter (breaking)
+
+- **`LambertRequest.maxRevs`** changes type from `number` to
+  `number | null`. Pass `null` to skip multi-rev (formerly `0`); pass
+  `1..=32` to search multi-rev branches. Out-of-range values reject
+  with a new `LambertErrorOutput::RevsOutOfRange { requested, max }`
+  variant.
+- **New `From<RevsOutOfRange> for LambertErrorOutput`** impl wires the
+  core's validation error into the JS-facing tagged union.
 
 ## [1.0.0] — 2026-04-30
 

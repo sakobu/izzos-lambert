@@ -52,9 +52,10 @@ pub(crate) struct Roots {
 /// Find every reachable `(x, y)` root for the given geometry and revolution
 /// budget.
 ///
-/// `revolutions.max()` is clamped to [`MAX_MULTI_REV_PAIRS`] internally —
-/// callers requesting more multi-rev branches than the bounded return can
-/// hold get the truncated set rather than an error.
+/// Multi-rev branches above the requested budget — or above the
+/// `BoundedRevs::MAX` type-level cap — are never reached: the budget is
+/// validated at construction time, so the bounded return collection always
+/// fits without truncation.
 ///
 /// # Errors
 ///
@@ -89,10 +90,9 @@ pub(crate) fn find_xy(
     // a branch fails, all higher branches also fail. The Halley T_min check
     // only fires on the boundary branch where big_t lies below the analytic
     // minimum T(x=0, M) = t00 + M·π — at most one Halley call per call to
-    // `find_xy`. Capacity-bounded; clamp at MAX_MULTI_REV_PAIRS so we never
-    // overflow the ArrayVec (callers above the cap get the truncated set).
-    let m_cap_u32 = u32::try_from(MAX_MULTI_REV_PAIRS).unwrap_or(u32::MAX);
-    let m_max = revolutions.max().min(m_cap_u32);
+    // `find_xy`. The ArrayVec capacity is type-enforced by `BoundedRevs`
+    // (≤ MAX_MULTI_REV_PAIRS), so no runtime clamp is required.
+    let m_max = revolutions.max();
     for m in 1..=m_max {
         let m_pi = f64::from(m) * PI;
 
@@ -114,9 +114,8 @@ pub(crate) fn find_xy(
         let (x0l, x0r) = initial_guess_multi_rev(big_t, m);
         let (xl, il) = householder(x0l, big_t, lambda, m)?;
         let (xr, ir) = householder(x0r, big_t, lambda, m)?;
-        // Capacity is guaranteed by the m_max clamp above, but use try_push
-        // to keep the no-panic discipline. If push fails we silently stop —
-        // higher-M branches are well outside the cap and aren't expected.
+        // Capacity is type-enforced via `BoundedRevs::MAX`; `try_push` here
+        // is no-panic discipline, not a real failure path.
         if multi
             .try_push(RootPair {
                 n_revs: m,

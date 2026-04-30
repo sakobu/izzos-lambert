@@ -11,7 +11,7 @@ fn earth_quarter_circle_request() -> LambertRequest {
         tof: core::f64::consts::PI / 2.0 * (7000.0_f64.powi(3) / MU_EARTH).sqrt(),
         mu: MU_EARTH,
         way: TransferWayInput::Short,
-        max_revs: 0,
+        max_revs: None,
     }
 }
 
@@ -35,7 +35,7 @@ fn invalid_request_returns_structured_error() {
         tof: 1000.0,
         mu: MU_EARTH,
         way: TransferWayInput::Short,
-        max_revs: 0,
+        max_revs: None,
     };
 
     let error = solve_lambert_request(request).unwrap_err();
@@ -58,7 +58,7 @@ fn non_finite_input_carries_typed_parameter() {
         tof: 1000.0,
         mu: MU_EARTH,
         way: TransferWayInput::Short,
-        max_revs: 0,
+        max_revs: None,
     };
 
     let error = solve_lambert_request(request).unwrap_err();
@@ -68,6 +68,38 @@ fn non_finite_input_carries_typed_parameter() {
         LambertErrorOutput::NonFiniteInput {
             parameter: NonFiniteParameterOutput::R1Y,
             ..
+        }
+    ));
+}
+
+#[test]
+fn out_of_range_max_revs_returns_structured_error() {
+    // 0 is below the type-enforced minimum (must be >= 1); the request fails
+    // before any solver work happens.
+    let request = LambertRequest {
+        max_revs: Some(0),
+        ..earth_quarter_circle_request()
+    };
+    let error = solve_lambert_request(request).unwrap_err();
+    assert!(matches!(
+        error,
+        LambertErrorOutput::RevsOutOfRange {
+            requested: 0,
+            max: 32,
+        }
+    ));
+
+    // Above-cap value is also rejected at request time.
+    let request = LambertRequest {
+        max_revs: Some(100),
+        ..earth_quarter_circle_request()
+    };
+    let error = solve_lambert_request(request).unwrap_err();
+    assert!(matches!(
+        error,
+        LambertErrorOutput::RevsOutOfRange {
+            requested: 100,
+            max: 32,
         }
     ));
 }

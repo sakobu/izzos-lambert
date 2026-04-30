@@ -11,8 +11,8 @@
 #![allow(clippy::module_name_repetitions)] // LambertRequest / LambertResponse mirror the core crate naming.
 
 use lambert_izzo::{
-    LambertError, LambertSolutions, NonFiniteParameter, Position, RevolutionBudget, TransferWay,
-    lambert as core_solve,
+    LambertError, LambertSolutions, NonFiniteParameter, Position, RevolutionBudget,
+    RevsOutOfRange, TransferWay, lambert as core_solve,
 };
 use serde::{Deserialize, Serialize};
 use tsify::Tsify;
@@ -55,7 +55,12 @@ pub struct LambertRequest {
     /// Short-way or long-way transfer selection.
     pub way: TransferWayInput,
     /// Maximum complete revolutions to consider beyond single-rev.
-    pub max_revs: u32,
+    ///
+    /// `null` (TypeScript) / `None` (Rust) skips multi-rev entirely. A
+    /// value `n` searches the `1..=n` multi-rev branches; out-of-range
+    /// values fail with [`LambertErrorOutput::RevsOutOfRange`]. The valid
+    /// range is `1..=lambert_izzo::BoundedRevs::MAX`.
+    pub max_revs: Option<u32>,
 }
 
 /// One JavaScript-friendly Lambert trajectory.
@@ -252,6 +257,17 @@ pub enum LambertErrorOutput {
         /// Branch index where the singularity occurred.
         n_revs: u32,
     },
+    /// Mirrors [`lambert_izzo::RevsOutOfRange`] — the [`LambertRequest::max_revs`]
+    /// value was outside the type-enforced range
+    /// (`1..=lambert_izzo::BoundedRevs::MAX`).
+    ///
+    /// Raised at request validation time, before any solver work.
+    RevsOutOfRange {
+        /// The rejected `maxRevs` value.
+        requested: u32,
+        /// The inclusive upper bound (`BoundedRevs::MAX`).
+        max: u32,
+    },
     /// A new [`LambertError`] variant has been added upstream that this
     /// wasm adapter does not yet mirror. The `message` field is the
     /// upstream error's `Display` rendering; JS callers should report it
@@ -295,6 +311,15 @@ impl From<LambertError> for LambertErrorOutput {
             other => Self::Unknown {
                 message: format!("{other}"),
             },
+        }
+    }
+}
+
+impl From<RevsOutOfRange> for LambertErrorOutput {
+    fn from(value: RevsOutOfRange) -> Self {
+        Self::RevsOutOfRange {
+            requested: value.requested,
+            max: value.max,
         }
     }
 }
@@ -394,7 +419,10 @@ pub fn solve_lambert_batch(requests: Vec<LambertRequest>) -> Vec<BatchResult> {
 pub fn solve_lambert_request(
     request: LambertRequest,
 ) -> Result<LambertResponse, LambertErrorOutput> {
-    let revolutions = RevolutionBudget::up_to(request.max_revs);
+    let revolutions = match request.max_revs {
+        None => RevolutionBudget::SingleOnly,
+        Some(n) => RevolutionBudget::try_up_to(n).map_err(LambertErrorOutput::from)?,
+    };
     let solutions = core_solve(&lambert_izzo::LambertInput {
         r1: request.r1,
         r2: request.r2,

@@ -80,7 +80,7 @@ fn main() {
         tof,
         mu: MU_EARTH,
         way: TransferWay::Short,
-        revolutions: RevolutionBudget::up_to(3),
+        revolutions: RevolutionBudget::try_up_to(3).expect("3 is within BoundedRevs::MAX"),
     })
     .expect("multi-rev phasing should converge");
     println!(

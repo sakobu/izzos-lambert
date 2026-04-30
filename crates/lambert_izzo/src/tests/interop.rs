@@ -47,7 +47,7 @@ fn serde_json_round_trip_preserves_solutions_and_errors() {
         tof: 5.0 * period,
         mu,
         way: TransferWay::Short,
-        revolutions: RevolutionBudget::up_to(2),
+        revolutions: RevolutionBudget::try_up_to(2).unwrap(),
     };
     let sols = lambert(&input).unwrap();
     let json = serde_json::to_string(&sols).unwrap();

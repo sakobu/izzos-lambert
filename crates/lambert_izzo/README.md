@@ -7,9 +7,9 @@ Dynamical Astronomy). A local copy of the paper lives at
 [`docs/izzo.pdf`](docs/izzo.pdf); for a friendly intro to the problem,
 read [`docs/concepts.md`](docs/concepts.md) first.
 
-> Pre-1.0 — the API and feature surface are stable enough for production
-> use but may shift before `1.0`. Breaking changes are tracked in
-> [`CHANGELOG.md`](CHANGELOG.md).
+Stable at `1.0.0`. Breaking changes follow strict semver; the
+[`CHANGELOG.md`](CHANGELOG.md) is the source of truth for migration
+notes between releases.
 
 ## What this solves (and what it doesn't)
 
@@ -33,12 +33,12 @@ crate.
 Supports:
 
 - Single-revolution transfers
-- Multi-revolution transfers (long-period and short-period branches)
-- Short-way and long-way transfers (`TransferWay::Short` /
-  `TransferWay::Long`, or `lambert_both_ways(...)` for one call returning
-  both); prograde vs retrograde is the caller's choice via the `(r1, r2)`
-  ordering, since `r1 × r2` defines the resulting orbit's
-  angular-momentum direction
+- Multi-revolution transfers (long-period and short-period branches per
+  revolution count)
+- Short-way and long-way transfers via `TransferWay::Short` /
+  `TransferWay::Long`. Prograde vs retrograde is the caller's choice
+  through the `(r1, r2)` ordering, since `r1 × r2` defines the resulting
+  orbit's angular-momentum direction
 - Hyperbolic transfers on the single-rev branch
 - `no_std`-friendly — pulls only `arrayvec`, `num-traits` (with `libm`),
   and `thiserror` (`std`-feature off) at runtime
@@ -48,10 +48,10 @@ Supports:
 
 ## Features
 
-| Feature | Default | Effect                                                                                                              |
-| ------- | ------- | ------------------------------------------------------------------------------------------------------------------- |
-| `serde` | off     | Adds `Serialize`/`Deserialize` derives on every public type, including `LambertError`.                              |
-| `rayon` | off     | Enables `lambert_par_iter` for parallel batch evaluation. Pulls in `std` transitively — incompatible with `no_std`. |
+| Feature | Default | Effect                                                                                                          |
+| ------- | ------- | --------------------------------------------------------------------------------------------------------------- |
+| `serde` | off     | Adds `Serialize`/`Deserialize` derives on every public type, including `LambertError`. Stays `no_std`-friendly. |
+| `rayon` | off     | Enables `lambert_par` for parallel batch evaluation. Pulls in `std` transitively — incompatible with `no_std`.  |
 
 > Need a Kepler propagator to round-trip Lambert solutions in your own
 > tests? It used to live behind a `test-utils` feature here; it now sits
@@ -87,44 +87,56 @@ frame-agnostic; the calling code's variable names carry the frame info.
 ## Usage
 
 ```rust
-use lambert_izzo::{lambert, RevolutionBudget, TransferWay};
+use lambert_izzo::{lambert, LambertInput, RevolutionBudget, TransferWay};
 
 // LEO → MEO Hohmann transfer.
 let mu = 398_600.441_8;
 let r1 = [7000.0, 0.0, 0.0];
 let r2 = [-12_000.0, 1.0, 0.0]; // 1 km off-axis avoids colinearity
-let a = (7000.0 + 12_000.0) / 2.0;
+let a = f64::midpoint(7000.0, 12_000.0);
 let tof = std::f64::consts::PI * (a.powi(3) / mu).sqrt();
 
-let solutions = lambert(
-    r1, r2, tof, mu,
-    TransferWay::Short, RevolutionBudget::SingleOnly,
-).unwrap();
+let solutions = lambert(&LambertInput {
+    r1,
+    r2,
+    tof,
+    mu,
+    way: TransferWay::Short,
+    revolutions: RevolutionBudget::SingleOnly,
+}).unwrap();
+
 let v1 = solutions.single.v1;
 let v2 = solutions.single.v2;
+let iters = solutions.diagnostics.single.iters; // Householder iter count
 ```
 
 The signature:
 
 ```rust
-pub fn lambert(
-    r1: [f64; 3],                  // initial position, any inertial frame
-    r2: [f64; 3],                  // final position, same frame
-    tof: f64,                      // time of flight, > 0
-    mu: f64,                       // gravitational parameter, > 0
-    way: TransferWay,              // Short or Long way around the transfer plane
-    revolutions: RevolutionBudget, // SingleOnly or UpTo(NonZero<u32>)
-) -> Result<LambertSolutions, LambertError>
+pub fn lambert(input: &LambertInput) -> Result<LambertSolutions, LambertError>
 ```
 
-The returned `LambertSolutions` is a typed shape — single-revolution
-always present, multi-revolution branches in `(long_period, short_period)`
-pairs:
+`LambertInput` carries the boundary problem and budget:
+
+```rust
+pub struct LambertInput {
+    pub r1: [f64; 3],                  // initial position, any inertial frame
+    pub r2: [f64; 3],                  // final position, same frame
+    pub tof: f64,                      // time of flight, > 0
+    pub mu: f64,                       // gravitational parameter, > 0
+    pub way: TransferWay,              // Short or Long way around the transfer plane
+    pub revolutions: RevolutionBudget, // SingleOnly or UpTo(BoundedRevs)
+}
+```
+
+The returned `LambertSolutions` carries the single-revolution trajectory,
+every reachable multi-rev pair, and per-branch diagnostics in one shape:
 
 ```rust
 pub struct LambertSolutions {
     pub single: LambertSolution,
-    pub multi: ArrayVec<MultiRevPair, MAX_MULTI_REV_PAIRS>, // up to 32, stack-allocated
+    pub multi: MultiRevSet,             // newtype around bounded ArrayVec; deref to &[MultiRevPair]
+    pub diagnostics: LambertDiagnostics, // structurally parallel to single / multi
 }
 
 pub struct MultiRevPair {
@@ -137,34 +149,52 @@ pub struct LambertSolution {
     pub v1: [f64; 3],
     pub v2: [f64; 3],
 }
+
+pub struct LambertDiagnostics {
+    pub single: SolverDiagnostics,
+    pub multi: MultiRevDiagnostics,     // mirrors `multi` 1:1
+}
+
+pub struct SolverDiagnostics {
+    pub iters: u32, // Householder iterations to converge
+}
 ```
 
-For the iteration count and Lancaster–Blanchard `x` (useful for
-diagnosing multi-rev branches), use `solve_with_diagnostics`:
+Diagnostics ride along inside every successful solve — there is no
+separate `solve_with_diagnostics` entry point. Iterate the multi-rev
+branches alongside their per-branch diagnostics:
 
 ```rust
-use lambert_izzo::solve_with_diagnostics;
-let (sols, diag) = solve_with_diagnostics(
-    r1, r2, tof, mu,
-    TransferWay::Short, RevolutionBudget::up_to(3),
-)?;
-println!("converged in {} iters", diag.single.iters);
+let solutions = lambert(&input)?;
+println!("single-rev: {} Householder iters", solutions.diagnostics.single.iters);
+
+for (pair, diag_pair) in solutions
+    .multi
+    .iter()
+    .zip(solutions.diagnostics.multi.iter())
+{
+    println!(
+        "M={}: long-period iters={}, short-period iters={}",
+        pair.n_revs,
+        diag_pair.long_period.iters,
+        diag_pair.short_period.iters,
+    );
+}
+# Ok::<(), lambert_izzo::LambertError>(())
 ```
 
-For the porkchop-plot pattern (you want both ways), use
-`lambert_both_ways`:
+For the porkchop-plot pattern (you want both transfer directions), call
+`lambert` twice with the two `TransferWay` values:
 
 ```rust
-use lambert_izzo::lambert_both_ways;
-let both = lambert_both_ways(r1, r2, tof, mu, RevolutionBudget::up_to(3))?;
-let short_v1 = both.short.single.v1;
-let long_v1 = both.long.single.v1;
+let short = lambert(&LambertInput { way: TransferWay::Short, ..input })?;
+let long  = lambert(&LambertInput { way: TransferWay::Long,  ..input })?;
 ```
 
 `LambertError` is a `thiserror` enum with structured fields:
 
 ```rust
-match lambert(r1, r2, tof, mu, TransferWay::Short, RevolutionBudget::SingleOnly) {
+match lambert(&input) {
     Ok(sols) => /* … */,
     Err(LambertError::NonFiniteInput { parameter, value })             => /* … */,
     Err(LambertError::NonPositiveTimeOfFlight { tof })                  => /* … */,
@@ -172,9 +202,34 @@ match lambert(r1, r2, tof, mu, TransferWay::Short, RevolutionBudget::SingleOnly)
     Err(LambertError::DegeneratePositionVector { position, norm })      => /* … */,
     Err(LambertError::CollinearGeometry { sin_angle })                  => /* … */,
     Err(LambertError::NoConvergence { iterations, last_step, n_revs })  => /* … */,
-    Err(_) => /* … */,
+    Err(LambertError::SingularDenominator { n_revs })                   => /* … */,
+    Err(_) => /* … */, // #[non_exhaustive]
 }
 ```
+
+### Revolution budget
+
+For multi-rev requests, construct the budget through the validated
+`BoundedRevs` type. Out-of-range counts (`0` or `> 32`) fail at
+construction time with `RevsOutOfRange`, never at solver runtime:
+
+```rust
+use lambert_izzo::{LambertInput, RevolutionBudget, RevsOutOfRange};
+
+// Common path: ergonomic fallible constructor.
+let revolutions = RevolutionBudget::try_up_to(5)?; // 5 ∈ 1..=32
+
+// Explicit: skip multi-rev entirely.
+let single_only = RevolutionBudget::SingleOnly;
+
+// Out-of-range request: fails before any solver work.
+let bad: Result<_, RevsOutOfRange> = RevolutionBudget::try_up_to(100);
+assert!(bad.is_err());
+# Ok::<(), RevsOutOfRange>(())
+```
+
+The cap is `BoundedRevs::MAX = 32`, type-equal to the
+`MAX_MULTI_REV_PAIRS` capacity of the bounded return collection.
 
 ### Math-library interop
 
@@ -217,14 +272,14 @@ Criterion benchmarks under `crates/lambert_izzo/benches/`. Numbers below
 are from an Apple Silicon laptop (release profile, single thread except
 for the parallel batch row).
 
-| Workload                                      | Throughput     | Per call |
-| --------------------------------------------- | -------------- | -------- |
-| Single-rev (random Earth orbits)              | ~2.7 M calls/s | ~360 ns  |
-| Multi-rev `M=3` (Earth orbits)                | ~735 K calls/s | ~1.4 µs  |
-| Sequential batch via `lambert_iter`           | ~1.1 M calls/s | ~900 ns  |
-| Parallel batch via `lambert_par_iter` (rayon) | ~8.6 M calls/s | ~116 ns  |
+| Workload                                  | Throughput     | Per call |
+| ----------------------------------------- | -------------- | -------- |
+| Single-rev (random Earth orbits)          | ~3.1 M calls/s | ~320 ns  |
+| Multi-rev `M=3` (Earth orbits)            | ~775 K calls/s | ~1.3 µs  |
+| Sequential batch (loop over `lambert`)    | ~1.2 M calls/s | ~830 ns  |
+| Parallel batch via `lambert_par` (rayon)  | ~8.8 M calls/s | ~114 ns  |
 
-The parallel batch shows ~7.7× speedup over sequential on this machine.
+The parallel batch shows ~7.3× speedup over sequential on this machine.
 Reproduce with:
 
 ```
@@ -236,28 +291,44 @@ cargo bench --bench batch --features rayon
 ## Batch / streaming API
 
 For porkchop plots, multi-shooter loops, or any workload with thousands
-of Lambert calls, `lambert_iter` and (under the `rayon` feature)
-`lambert_par_iter` map a slice of `LambertInput`:
+of Lambert calls, build a `Vec<LambertInput>` and either iterate
+sequentially or — under the `rayon` feature — use `lambert_par` for
+parallel evaluation:
 
 ```rust
-use lambert_izzo::{LambertInput, RevolutionBudget, TransferWay, lambert_iter};
+use lambert_izzo::{LambertInput, RevolutionBudget, TransferWay, lambert};
 
 let inputs: Vec<LambertInput> = (0..10_000)
-    .map(|_| LambertInput { /* … */ # r1: [7000.0, 0.0, 0.0],
-        # r2: [0.0, 7000.0, 0.0], tof: 1500.0, mu: 398_600.4418,
-        # way: TransferWay::Short,
-        # revolutions: RevolutionBudget::SingleOnly,
+    .map(|_| LambertInput {
+        r1: [7000.0, 0.0, 0.0],
+        r2: [0.0, 7000.0, 0.0],
+        tof: 1500.0,
+        mu: 398_600.4418,
+        way: TransferWay::Short,
+        revolutions: RevolutionBudget::SingleOnly,
     })
     .collect();
 
-let total_dv: f64 = lambert_iter(&inputs)
-    .filter_map(Result::ok)
+// Sequential:
+let total_dv: f64 = inputs
+    .iter()
+    .filter_map(|input| lambert(input).ok())
     .map(|sols| sols.single.v1[0].abs())
     .sum();
 ```
 
-With `--features rayon`, swap `lambert_iter` for `lambert_par_iter` and
-the work fans out across the thread pool.
+With `--features rayon`, the work fans out across the thread pool
+through `lambert_par`:
+
+```rust,ignore
+use lambert_izzo::lambert_par;
+use rayon::iter::ParallelIterator;
+
+let total_dv: f64 = lambert_par(&inputs)
+    .filter_map(Result::ok)
+    .map(|sols| sols.single.v1[0].abs())
+    .sum();
+```
 
 ## Building
 
@@ -295,7 +366,11 @@ math.
     so the Householder loop computes it once per step instead of twice.
   - `root_finding.rs` — Householder (Eq. 30/31 starters) + Halley
     `T_min` search.
-  - `lib.rs` — public API + integration tests.
+  - `bounded_revs.rs` — `BoundedRevs` newtype + `RevsOutOfRange`
+    construction error.
+  - `lib.rs` — public API surface and the `lambert` entry point.
+  - `tests/` — per-scenario test modules (`single_rev`, `multi_rev`,
+    `errors`, `regimes`, `interop`, `kepler_roundtrip`).
 - TOF evaluation blends Battin's series (Eq. 20) for `|x − 1| ≤ 0.01`,
   Lancaster–Blanchard (Eq. 18) for `0.01 < |x − 1| ≤ 0.2`, and Lagrange
   (Eq. 9) elsewhere. The Battin path uses a direct series sum of
@@ -306,10 +381,12 @@ math.
   before deciding which revolution counts admit solutions.
 - Initial guesses follow Eq. 30 (single-rev) and Eq. 31 (multi-rev).
 - Velocity reconstruction follows Algorithm 1.
-- Multi-rev branches are clamped at `MAX_MULTI_REV_PAIRS = 32`. The
-  bounded `ArrayVec` return means `lambert(...)` does no heap allocation
-  on any code path (`MAX_MULTI_REV_PAIRS * sizeof(MultiRevPair)` lives
-  on the stack).
+- Multi-rev branches are bounded by `MAX_MULTI_REV_PAIRS = 32`, with the
+  cap enforced at the type level via `BoundedRevs` (out-of-range requests
+  fail with `RevsOutOfRange` at construction time). The bounded
+  `ArrayVec` return means `lambert(...)` does no heap allocation on any
+  code path (`MAX_MULTI_REV_PAIRS * sizeof(MultiRevPair)` lives on the
+  stack).
 
 ## License
 

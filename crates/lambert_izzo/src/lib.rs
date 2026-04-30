@@ -109,9 +109,17 @@
 /// missions almost never exceed `M = 5`. This cap keeps the bounded return
 /// type a fixed stack size.
 ///
-/// Callers passing [`RevolutionBudget::up_to`] above this cap get the
-/// truncated set rather than an error.
+/// The cap is type-enforced via [`BoundedRevs::MAX`]: requests above it
+/// fail at construction time with [`RevsOutOfRange`] rather than being
+/// silently truncated. The two constants are kept in sync by a static
+/// assertion at the crate root.
 pub const MAX_MULTI_REV_PAIRS: usize = 32;
+
+// `BoundedRevs::MAX` (the type-level cap on requested revolutions) and
+// `MAX_MULTI_REV_PAIRS` (the bounded-collection capacity holding the
+// matching results) must agree so `RevolutionBudget::UpTo` is always
+// representable in the return without truncation.
+const _: () = assert!(BoundedRevs::MAX as usize == MAX_MULTI_REV_PAIRS); // u32 → usize: always safe (usize ≥ 32 bits)
 
 /// Direction around the transfer plane from `r1` to `r2`.
 ///
@@ -132,38 +140,56 @@ pub enum TransferWay {
 /// Multi-revolution branches admit two solutions per revolution count `M`
 /// (long-period and short-period), so the total solution count is
 /// `1 + 2 · min(max(), ⌊T/π⌋)` adjusted downward when a branch's `T_min`
-/// exceeds the requested time of flight, and clamped at
-/// [`MAX_MULTI_REV_PAIRS`] regardless of the requested value.
+/// exceeds the requested time of flight. The upper bound on `M` is
+/// type-enforced via [`BoundedRevs`] — out-of-range requests fail at
+/// construction time rather than being clamped.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum RevolutionBudget {
     /// Solve the single-revolution case only — always exactly one solution.
     #[default]
     SingleOnly,
-    /// Search up to `M` complete revolutions inclusive (`M ≥ 1`).
-    UpTo(core::num::NonZeroU32),
+    /// Search up to `M` complete revolutions inclusive, with `M` validated
+    /// at construction time to lie in `1..=BoundedRevs::MAX`.
+    UpTo(BoundedRevs),
 }
 
 impl RevolutionBudget {
-    /// Convenience constructor: `up_to(0)` collapses to `SingleOnly`.
+    /// Wrap a pre-validated [`BoundedRevs`] into a budget. Infallible — the
+    /// `1..=BoundedRevs::MAX` bound is already established at the
+    /// [`BoundedRevs::try_new`] call site.
     #[must_use]
-    pub fn up_to(m: u32) -> Self {
-        match core::num::NonZeroU32::new(m) {
-            Some(nz) => Self::UpTo(nz),
-            None => Self::SingleOnly,
+    pub const fn up_to(revs: BoundedRevs) -> Self {
+        Self::UpTo(revs)
+    }
+
+    /// Ergonomic fallible constructor.
+    ///
+    /// Equivalent to `BoundedRevs::try_new(n).map(RevolutionBudget::up_to)`.
+    /// Use [`RevolutionBudget::SingleOnly`] directly when you want to skip
+    /// multi-rev entirely — passing `0` is rejected.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RevsOutOfRange`] when `n == 0` or `n > BoundedRevs::MAX`.
+    pub const fn try_up_to(n: u32) -> Result<Self, RevsOutOfRange> {
+        match BoundedRevs::try_new(n) {
+            Ok(revs) => Ok(Self::UpTo(revs)),
+            Err(e) => Err(e),
         }
     }
 
     /// The maximum revolution count this budget will search (`0` for single-only).
     #[must_use]
-    pub fn max(self) -> u32 {
+    pub const fn max(self) -> u32 {
         match self {
             Self::SingleOnly => 0,
-            Self::UpTo(n) => n.get(),
+            Self::UpTo(b) => b.get(),
         }
     }
 }
 
+mod bounded_revs;
 mod constants;
 mod error;
 mod geometry;
@@ -177,6 +203,7 @@ mod vec3;
 #[cfg(test)]
 mod tests;
 
+pub use bounded_revs::{BoundedRevs, RevsOutOfRange};
 pub use error::{LambertError, NonFiniteParameter, Position};
 pub use multi_rev_diagnostics::MultiRevDiagnostics;
 pub use multi_rev_set::MultiRevSet;
@@ -300,8 +327,10 @@ pub struct LambertInput {
 /// in that same frame.
 ///
 /// Returns the always-present single-revolution trajectory, every
-/// reachable multi-rev branch up to `revolutions.max()` (clamped at
-/// [`MAX_MULTI_REV_PAIRS`]), and the per-branch [`SolverDiagnostics`].
+/// reachable multi-rev branch up to `revolutions.max()`, and the per-branch
+/// [`SolverDiagnostics`]. The revolution budget is itself capped at
+/// [`BoundedRevs::MAX`] at construction time, so the returned `multi` set
+/// fits within [`MAX_MULTI_REV_PAIRS`] without runtime clamping.
 ///
 /// All quantities are dimensionally homogeneous — pass any consistent
 /// unit system. The crate's docs and examples use km / km/s / s / km³/s².

@@ -23,7 +23,7 @@ fn phasing_input() -> LambertInput {
         tof: 5.0 * period,
         mu: MU_EARTH,
         way: TransferWay::Short,
-        revolutions: RevolutionBudget::up_to(3),
+        revolutions: RevolutionBudget::try_up_to(3).unwrap(),
     }
 }
 
@@ -105,7 +105,7 @@ fn kepler_roundtrip_random_multi_rev() {
             tof,
             mu,
             way: TransferWay::Short,
-            revolutions: RevolutionBudget::up_to(3),
+            revolutions: RevolutionBudget::try_up_to(3).unwrap(),
         };
         let Ok(sols) = lambert(&input) else {
             continue;

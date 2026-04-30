@@ -18,7 +18,7 @@ fn spec() -> Spec {
         tof_range: (100.0, 50_000.0),
         mu: MU_EARTH,
         way: WayStrategy::Short,
-        revolutions: RevolutionBudget::up_to(3),
+        revolutions: RevolutionBudget::try_up_to(3).expect("3 is within BoundedRevs::MAX"),
     }
 }
 

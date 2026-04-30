@@ -66,11 +66,23 @@ const response = solveLambert({
   tof: 1457,
   mu: 398600.4418,
   way: "short",
-  maxRevs: 0,
+  maxRevs: null, // null = single-rev only; pass 1..=32 to search multi-rev branches
 });
 
 console.log(response.single.v1);
 console.log(response.diagnostics.single.iters);
+```
+
+`maxRevs` is validated at request time. Out-of-range values (`0` or `> 32`)
+reject with a typed `RevsOutOfRange` error before any solver work runs:
+
+```ts
+try {
+  solveLambert({ ...request, maxRevs: 100 });
+} catch (error) {
+  // error.kind === "RevsOutOfRange"
+  // error.requested === 100, error.max === 32
+}
 ```
 
 The wrapper response shape (camelCased per `serde(rename_all)`):

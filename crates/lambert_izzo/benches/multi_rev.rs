@@ -16,7 +16,7 @@ fn multi_rev_throughput(c: &mut Criterion) {
         tof_range: (10_000.0, 250_000.0),
         mu: MU_EARTH,
         way: WayStrategy::Short,
-        revolutions: RevolutionBudget::up_to(3),
+        revolutions: RevolutionBudget::try_up_to(3).expect("3 is within BoundedRevs::MAX"),
     });
 
     let mut group = c.benchmark_group("multi_rev_M3");

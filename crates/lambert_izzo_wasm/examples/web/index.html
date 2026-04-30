@@ -27,7 +27,7 @@
     <option value="short" selected>short</option>
     <option value="long">long</option>
   </select><br>
-  <label>maxRevs</label> <input id="maxRevs" type="number" min="0" max="32" value="0"><br>
+  <label>maxRevs</label> <input id="maxRevs" type="number" min="1" max="32" placeholder="blank = single-rev only"><br>
   <button id="solve">Solve</button>
 </fieldset>
 
@@ -43,13 +43,15 @@ out.textContent = "Wasm loaded. Click Solve.";
 
 document.getElementById("solve").addEventListener("click", () => {
   const parseVec = (s) => s.split(",").map((x) => Number(x.trim()));
+  const maxRevsRaw = document.getElementById("maxRevs").value.trim();
+  const maxRevs = maxRevsRaw === "" ? null : Number(maxRevsRaw);
   const request = {
     r1: parseVec(document.getElementById("r1").value),
     r2: parseVec(document.getElementById("r2").value),
     tof: Number(document.getElementById("tof").value),
     mu: Number(document.getElementById("mu").value),
     way: document.getElementById("way").value,
-    maxRevs: Number(document.getElementById("maxRevs").value),
+    maxRevs,
   };
   try {
     const response = solveLambert(request);

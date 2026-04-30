@@ -83,7 +83,7 @@ fn main() {
         tof,
         mu: MU_EARTH,
         way: TransferWay::Short,
-        revolutions: RevolutionBudget::up_to(10),
+        revolutions: RevolutionBudget::try_up_to(10).expect("10 is within BoundedRevs::MAX"),
     })
     .expect("phasing should converge");
     println!(

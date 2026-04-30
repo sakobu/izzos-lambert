@@ -33,7 +33,7 @@ const response = solveLambert({
   tof: 1457,
   mu: 398600.4418,
   way: "short",
-  maxRevs: 0,
+  maxRevs: null, // null = single-rev only; pass 1..=32 to search multi-rev branches
 });
 
 console.log(response.single.v1);                    // velocity at r1
@@ -83,7 +83,7 @@ handle each failure mode.
 | Rust (core) | JS (wasm) | Why |
 |-------------|-----------|-----|
 | `MultiRevSet` (capacity 32) | `Array<MultiRevPair>` | JS has no fixed-size arrays. |
-| `RevolutionBudget` enum | `maxRevs: number` | JS has no `NonZeroU32` and no algebraic enums. |
+| `RevolutionBudget` enum | `maxRevs: number \| null` | `null` = single-rev only; `1..=32` searches multi-rev; out-of-range rejects with `RevsOutOfRange`. |
 | `Result<T, LambertError>` | `BatchResult` tagged union | JS narrows on a discriminator field. |
 | Diagnostics inside `LambertSolutions` | Diagnostics inside `LambertResponse` | Mirrors the core 1:1. |
 

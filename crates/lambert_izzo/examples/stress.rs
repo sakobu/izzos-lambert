@@ -120,7 +120,7 @@ fn main() {
                 tof,
                 mu,
                 way: TransferWay::Short,
-                revolutions: RevolutionBudget::up_to(5),
+                revolutions: RevolutionBudget::try_up_to(5).expect("5 is within BoundedRevs::MAX"),
             }) {
                 Ok(sols) => {
                     for (pair, dpair) in sols.multi.iter().zip(sols.diagnostics.multi.iter()) {
