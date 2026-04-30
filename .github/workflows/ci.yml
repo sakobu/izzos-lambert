@@ -9,28 +9,51 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
-    name: test (${{ matrix.toolchain }} ${{ matrix.features }})
+  msrv:
+    name: msrv build (1.85.0 ${{ matrix.features }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        toolchain: ["1.85.0", "stable"]
         features:
           - "--no-default-features"
           - "--features serde"
           - "--features rayon"
           - "--all-features"
     env:
-      RUSTUP_TOOLCHAIN: ${{ matrix.toolchain }}
+      RUSTUP_TOOLCHAIN: 1.85.0
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ matrix.toolchain }}
+          toolchain: 1.85.0
       - uses: Swatinem/rust-cache@v2
         with:
-          key: test-${{ matrix.toolchain }}-${{ matrix.features }}
+          key: msrv-${{ matrix.features }}
+      # MSRV is verified on the published crate only — dev-deps (nalgebra,
+      # criterion, etc.) are not part of the consumer-facing surface and
+      # may require a newer rustc than lambert_izzo itself.
+      - run: cargo build -p lambert_izzo ${{ matrix.features }}
+
+  test:
+    name: test (stable ${{ matrix.features }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features:
+          - "--no-default-features"
+          - "--features serde"
+          - "--features rayon"
+          - "--all-features"
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test-${{ matrix.features }}
       - run: cargo build --workspace ${{ matrix.features }}
       - run: cargo test --workspace ${{ matrix.features }}
       - run: cargo test --doc -p lambert_izzo ${{ matrix.features }}
