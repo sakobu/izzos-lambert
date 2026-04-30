@@ -11,7 +11,7 @@ version = "1.0.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/sakobu/izzos_lambert"
+repository = "https://github.com/sakobu/izzos-lambert"
 
 [workspace.dependencies]
 lambert_izzo = { path = "crates/lambert_izzo" }
