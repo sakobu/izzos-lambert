@@ -263,6 +263,21 @@ pub struct LambertSolutions {
     pub diagnostics: LambertDiagnostics,
 }
 
+impl LambertSolutions {
+    /// Highest revolution count for which the solver found a feasible
+    /// `(long_period, short_period)` pair at the requested time-of-flight
+    /// — the silent-skip boundary referenced in [`lambert`]'s
+    /// _Validity / near-degenerate behavior_ section (the paper's `M`).
+    ///
+    /// `0` for [`RevolutionBudget::SingleOnly`] or when no multi-rev
+    /// branch was feasible; otherwise equal to
+    /// `self.multi.last().unwrap().n_revs`.
+    #[must_use]
+    pub fn max_feasible_revs(&self) -> u32 {
+        self.multi.last().map_or(0, |pair| pair.n_revs)
+    }
+}
+
 /// Diagnostic data for one converged Householder solve.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -360,7 +375,9 @@ pub struct LambertInput {
 ///   skipped.
 /// - **Multi-rev infeasibility** — for `M ≥ 1`, the branch admits a solution
 ///   only when `tof ≥ T_min(M, λ)`. Higher-`M` branches are dropped from the
-///   returned `multi` set when their `T_min` exceeds the requested TOF.
+///   returned `multi` set when their `T_min` exceeds the requested TOF;
+///   call [`LambertSolutions::max_feasible_revs`] to detect this boundary
+///   programmatically.
 ///
 /// # Returns
 ///
@@ -368,9 +385,10 @@ pub struct LambertInput {
 /// `multi` set of [`MultiRevPair`] entries in ascending `M` order, and the
 /// matching [`LambertDiagnostics`]. The `multi` set is empty for
 /// [`RevolutionBudget::SingleOnly`] and may be shorter than
-/// `revolutions.max()` if higher-`M` branches are infeasible. Each
-/// [`LambertSolution`] carries the start and end velocities `(v1, v2)` in
-/// the input frame and units.
+/// `revolutions.max()` if higher-`M` branches are infeasible — in which case
+/// [`LambertSolutions::max_feasible_revs`] returns the highest `M` actually
+/// solved. Each [`LambertSolution`] carries the start and end velocities
+/// `(v1, v2)` in the input frame and units.
 ///
 /// # Errors
 ///

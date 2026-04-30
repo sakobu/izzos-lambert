@@ -231,6 +231,15 @@ assert!(bad.is_err());
 The cap is `BoundedRevs::MAX = 32`, type-equal to the
 `MAX_MULTI_REV_PAIRS` capacity of the bounded return collection.
 
+When the solver silently drops higher-`M` branches (their `T_min(M)`
+exceeds the requested `tof`), call `solutions.max_feasible_revs()` to get
+the highest `M` that actually produced a `(long_period,
+short_period)` pair. It returns `0` for `RevolutionBudget::SingleOnly`
+and `0` when no multi-rev branch was feasible at all; otherwise it
+equals `solutions.multi.last().unwrap().n_revs`. Use it to detect the
+silent-skip boundary without having to compare requested vs returned
+counts by hand.
+
 ### Math-library interop
 
 The crate has no hard math-library dependency. Both

@@ -129,3 +129,60 @@ fn kepler_roundtrip_random_multi_rev() {
     assert!(good_count > 300, "too few converged round-trips: {good_count}/{branches}");
     assert!(max_rel_err < 1e-5, "max relative round-trip err = {max_rel_err:.3e} over {good_count} branches");
 }
+
+#[test]
+fn max_feasible_revs_reflects_silent_skip() {
+    // Earth-orbit phasing with up_to(10), but tof only large enough for a
+    // few multi-rev branches. `max_feasible_revs` must report the highest
+    // M that actually produced a pair, below the requested cap.
+    let r = 8000.0_f64;
+    let period = 2.0 * PI * (r.powi(3) / MU_EARTH).sqrt();
+    let input = LambertInput {
+        r1: [r, 0.0, 0.0],
+        r2: [5600.0, 5600.0, 0.0],
+        tof: 3.0 * period,
+        mu: MU_EARTH,
+        way: TransferWay::Short,
+        revolutions: RevolutionBudget::try_up_to(10).unwrap(),
+    };
+    let sols = lambert(&input).unwrap();
+
+    assert!(!sols.multi.is_empty(), "no multi-rev pairs returned");
+    assert!(
+        sols.max_feasible_revs() < 10,
+        "expected silent-skip below requested cap; got max_feasible_revs = {}",
+        sols.max_feasible_revs(),
+    );
+}
+
+#[test]
+fn max_feasible_revs_zero_when_single_only() {
+    // Same phasing geometry, but the budget rejects every multi-rev branch.
+    let mut input = phasing_input();
+    input.revolutions = RevolutionBudget::SingleOnly;
+    let sols = lambert(&input).unwrap();
+
+    assert!(sols.multi.is_empty());
+    assert_eq!(sols.max_feasible_revs(), 0);
+}
+
+#[test]
+fn max_feasible_revs_zero_when_no_multi_branch_feasible() {
+    // Quarter-circle Earth orbit — TOF is one quarter period, far below
+    // T_min for every M ≥ 1, so no multi-rev branch is feasible even
+    // though the budget asked for some.
+    let r = 7000.0_f64;
+    let tof = (PI / 2.0) * (r.powi(3) / MU_EARTH).sqrt();
+    let input = LambertInput {
+        r1: [r, 0.0, 0.0],
+        r2: [0.0, r, 0.0],
+        tof,
+        mu: MU_EARTH,
+        way: TransferWay::Short,
+        revolutions: RevolutionBudget::try_up_to(3).unwrap(),
+    };
+    let sols = lambert(&input).unwrap();
+
+    assert!(sols.multi.is_empty());
+    assert_eq!(sols.max_feasible_revs(), 0);
+}

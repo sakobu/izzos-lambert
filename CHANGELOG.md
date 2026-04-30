@@ -31,6 +31,17 @@ rather than enforced by silent runtime clamping.
 - **Kernel simplified** — the `m_max.min(MAX_MULTI_REV_PAIRS)` clamp in
   `find_xy` is gone; the type now carries the invariant.
 
+### Multi-rev silent-skip diagnostic
+
+- **New `LambertSolutions::max_feasible_revs()` method** — returns the
+  highest revolution count `M` for which a feasible
+  `(long_period, short_period)` pair was found at the requested TOF.
+  `0` when `RevolutionBudget::SingleOnly` was used or no multi-rev
+  branch was feasible. Lets callers programmatically detect the
+  silent-skip behavior at the `T_min(M) > tof` boundary that until
+  now was only documented in `lambert`'s validity rubric. JS callers
+  derive the same value from `response.multi.at(-1)?.nRevs ?? 0`.
+
 ### WASM adapter (breaking)
 
 - **`LambertRequest.maxRevs`** changes type from `number` to

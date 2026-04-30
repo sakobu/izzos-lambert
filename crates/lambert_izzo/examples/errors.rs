@@ -91,6 +91,11 @@ fn main() {
          branches whose T_min exceeded tof.",
         sols.multi.len()
     );
+    println!(
+        "  max_feasible_revs() = {} (highest M actually solved; \
+         use this to detect the silent-skip boundary).",
+        sols.max_feasible_revs(),
+    );
     for pair in &sols.multi {
         println!(
             "    M={}: long-period |v1|={:.3} km/s, short-period |v1|={:.3} km/s",
