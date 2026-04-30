@@ -1,10 +1,11 @@
 [package]
 name = "lambert_izzo"
-version = "0.5.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "Izzo's revisited Lambert solver (single & multi-rev, short & long way), no_std-friendly"
 license.workspace = true
+repository.workspace = true
 readme = "README.md"
 documentation = "https://docs.rs/lambert_izzo"
 keywords = ["astrodynamics", "lambert", "orbital-mechanics", "izzo", "no_std"]
@@ -15,7 +16,7 @@ default = []
 # Adds Serialize/Deserialize derives on every public type, including
 # LambertError. Pulls in serde and arrayvec/serde.
 serde = ["dep:serde", "arrayvec/serde"]
-# Enables `lambert_par_iter`, a parallel batch iterator backed by Rayon.
+# Enables `lambert_par`, a parallel batch iterator backed by Rayon.
 # Pulls in `std` transitively through Rayon — incompatible with no_std.
 rayon = ["dep:rayon"]
 

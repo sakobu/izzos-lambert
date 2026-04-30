@@ -25,14 +25,7 @@ fn single_rev_throughput(c: &mut Criterion) {
     group.bench_function("lambert_x10000_random_earth", |b| {
         b.iter(|| {
             for input in &inputs {
-                let _ = black_box(lambert(
-                    input.r1,
-                    input.r2,
-                    input.tof,
-                    input.mu,
-                    input.way,
-                    input.revolutions,
-                ));
+                let _ = black_box(lambert(input));
             }
         });
     });

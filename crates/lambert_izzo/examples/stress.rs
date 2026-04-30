@@ -7,9 +7,7 @@
 //! Run with `cargo run --release --example stress`.
 
 use glam::DVec3;
-use lambert_izzo::{
-    LambertSolution, RevolutionBudget, TransferWay, lambert, solve_with_diagnostics,
-};
+use lambert_izzo::{LambertInput, LambertSolution, RevolutionBudget, TransferWay, lambert};
 use lambert_izzo_test_support::bodies::MU_EARTH;
 use lambert_izzo_test_support::rand_unit_vec;
 use rand::{Rng, SeedableRng};
@@ -62,10 +60,17 @@ fn main() {
             } else {
                 TransferWay::Short
             };
-            match solve_with_diagnostics(r1, r2, tof, mu, way, RevolutionBudget::SingleOnly) {
-                Ok((sols, diag)) => {
-                    iters_hist[diag.single.iters as usize] += 1; // u32 → usize: always safe
-                    total_iters += diag.single.iters;
+            match lambert(&LambertInput {
+                r1,
+                r2,
+                tof,
+                mu,
+                way,
+                revolutions: RevolutionBudget::SingleOnly,
+            }) {
+                Ok(sols) => {
+                    iters_hist[sols.diagnostics.single.iters as usize] += 1; // u32 → usize: always safe
+                    total_iters += sols.diagnostics.single.iters;
                     let (e_rel, h_rel) = check_conservation(r1, sols.single, r2, mu);
                     if e_rel.is_finite() {
                         max_e_rel = max_e_rel.max(e_rel);
@@ -109,16 +114,16 @@ fn main() {
             let r1 = scaled_unit(&mut rng, r1_mag);
             let r2 = scaled_unit(&mut rng, r2_mag);
             let tof = rng.sample(tof_dist);
-            match solve_with_diagnostics(
+            match lambert(&LambertInput {
                 r1,
                 r2,
                 tof,
                 mu,
-                TransferWay::Short,
-                RevolutionBudget::up_to(5),
-            ) {
-                Ok((sols, diag)) => {
-                    for (pair, dpair) in sols.multi.iter().zip(diag.multi.iter()) {
+                way: TransferWay::Short,
+                revolutions: RevolutionBudget::up_to(5),
+            }) {
+                Ok(sols) => {
+                    for (pair, dpair) in sols.multi.iter().zip(sols.diagnostics.multi.iter()) {
                         for (branch, dbranch) in [
                             (pair.long_period, dpair.long_period),
                             (pair.short_period, dpair.short_period),
@@ -160,13 +165,13 @@ fn main() {
     let r1 = [7000.0, 0.0, 0.0];
     let r2 = [0.0, 7000.0, 0.0];
     let tof = core::f64::consts::PI / 2.0 * (7000.0_f64.powi(3) / mu).sqrt();
-    let _ = lambert(
+    let _ = lambert(&LambertInput {
         r1,
         r2,
         tof,
         mu,
-        TransferWay::Short,
-        RevolutionBudget::SingleOnly,
-    )
+        way: TransferWay::Short,
+        revolutions: RevolutionBudget::SingleOnly,
+    })
     .expect("trivial LEO Lambert call should succeed");
 }

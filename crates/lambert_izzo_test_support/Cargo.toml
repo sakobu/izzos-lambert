@@ -1,10 +1,11 @@
 [package]
 name = "lambert_izzo_test_support"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "Workspace-internal dev fixtures for lambert_izzo (constants, RNG helpers, Kepler propagator, random LambertInput batches)."
 license.workspace = true
+repository.workspace = true
 publish = false
 
 [dependencies]

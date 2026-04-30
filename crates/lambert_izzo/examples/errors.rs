@@ -5,8 +5,8 @@ use core::f64::consts::PI;
 
 use glam::DVec3;
 use lambert_izzo::{
-    LambertError, NonFiniteParameter, Position, RevolutionBudget, TransferWay, lambert,
-    solve_with_diagnostics,
+    LambertError, LambertInput, NonFiniteParameter, Position, RevolutionBudget, TransferWay,
+    lambert,
 };
 use lambert_izzo_test_support::bodies::MU_EARTH;
 
@@ -15,29 +15,29 @@ fn main() {
     // r1 and r2 both on the +X axis: transfer plane undefined.
     let r1 = [7000.0, 0.0, 0.0];
     let r2 = [14_000.0, 0.0, 0.0];
-    match lambert(
+    match lambert(&LambertInput {
         r1,
         r2,
-        1500.0,
-        MU_EARTH,
-        TransferWay::Short,
-        RevolutionBudget::SingleOnly,
-    ) {
+        tof: 1500.0,
+        mu: MU_EARTH,
+        way: TransferWay::Short,
+        revolutions: RevolutionBudget::SingleOnly,
+    }) {
         Err(LambertError::CollinearGeometry { sin_angle }) => {
             println!(
-                "  rejected: sin(θ) = {sin_angle:.3e} (below COLINEARITY_TOL).\n  \
+                "  rejected: sin(θ) = {sin_angle:.3e} (transfer plane undefined).\n  \
                  Recovery: perturb r2 by 1 km off-plane."
             );
             // Re-solve with a tiny off-plane component.
             let r2_perturbed = [r2[0], 1.0, 0.0];
-            let sols = lambert(
+            let sols = lambert(&LambertInput {
                 r1,
-                r2_perturbed,
-                1500.0,
-                MU_EARTH,
-                TransferWay::Short,
-                RevolutionBudget::SingleOnly,
-            )
+                r2: r2_perturbed,
+                tof: 1500.0,
+                mu: MU_EARTH,
+                way: TransferWay::Short,
+                revolutions: RevolutionBudget::SingleOnly,
+            })
             .expect("perturbed geometry should converge");
             println!(
                 "  perturbed v1 = [{:+.4}, {:+.4}, {:+.4}] km/s",
@@ -51,14 +51,14 @@ fn main() {
     println!("\n=== 2. Non-finite input — typed Position + parameter ===");
     let bad_r1 = [7000.0, f64::INFINITY, 0.0];
     let r2 = [0.0, 7000.0, 0.0];
-    match lambert(
-        bad_r1,
+    match lambert(&LambertInput {
+        r1: bad_r1,
         r2,
-        1500.0,
-        MU_EARTH,
-        TransferWay::Short,
-        RevolutionBudget::SingleOnly,
-    ) {
+        tof: 1500.0,
+        mu: MU_EARTH,
+        way: TransferWay::Short,
+        revolutions: RevolutionBudget::SingleOnly,
+    }) {
         Err(LambertError::NonFiniteInput { parameter, value }) => {
             // Pattern-match on the typed enum, not a string.
             let component = match parameter {
@@ -72,19 +72,19 @@ fn main() {
 
     println!("\n=== 3. Multi-rev infeasibility — silent skip ===");
     // Earth-orbit phasing with up_to(10), but tof only large enough for a
-    // few branches. Higher M get dropped from the returned `multi` list.
+    // few branches. Higher M get dropped from the returned `multi` set.
     let r1 = [8000.0, 0.0, 0.0];
     let r2 = [5600.0, 5600.0, 0.0];
     let period = 2.0 * PI * (8000.0_f64.powi(3) / MU_EARTH).sqrt();
     let tof = 3.0 * period;
-    let sols = lambert(
+    let sols = lambert(&LambertInput {
         r1,
         r2,
         tof,
-        MU_EARTH,
-        TransferWay::Short,
-        RevolutionBudget::up_to(10),
-    )
+        mu: MU_EARTH,
+        way: TransferWay::Short,
+        revolutions: RevolutionBudget::up_to(10),
+    })
     .expect("phasing should converge");
     println!(
         "  asked for up to M=10, got {} multi-rev pair(s) — solver dropped \
@@ -104,68 +104,66 @@ fn main() {
     let r1 = [7000.0, 0.0, 0.0];
     let r2 = [0.0, 42_000.0, 0.0];
     let tof = 7200.0;
-    let (sols, diag) = solve_with_diagnostics(
+    let sols = lambert(&LambertInput {
         r1,
         r2,
         tof,
-        MU_EARTH,
-        TransferWay::Short,
-        RevolutionBudget::SingleOnly,
-    )
+        mu: MU_EARTH,
+        way: TransferWay::Short,
+        revolutions: RevolutionBudget::SingleOnly,
+    })
     .expect("near-parabolic should converge via Battin");
-    let x = diag.single.lancaster_blanchard_x;
     println!(
-        "  converged x = {x:.6}, |x−1| = {:.3e}; Battin threshold = {:.3e}.",
-        (x - 1.0).abs(),
-        lambert_izzo::constants::BATTIN_THRESHOLD,
+        "  iters = {} (single-rev paper avg ≈ 2.1); regime is selected internally \
+         when |x − 1| is small enough to need the hypergeometric series.",
+        sols.diagnostics.single.iters,
     );
-    println!("  iters = {} (single-rev paper avg ≈ 2.1).", diag.single.iters);
     println!(
         "  trajectory v1 = [{:+.4}, {:+.4}, {:+.4}] km/s",
         sols.single.v1[0], sols.single.v1[1], sols.single.v1[2],
     );
 
     println!("\n=== 5. Degenerate position — typed Position::R1 / R2 ===");
-    let err = lambert(
-        [0.0, 0.0, 0.0],
+    let err = lambert(&LambertInput {
+        r1: [0.0, 0.0, 0.0],
         r2,
-        1500.0,
-        MU_EARTH,
-        TransferWay::Short,
-        RevolutionBudget::SingleOnly,
-    )
+        tof: 1500.0,
+        mu: MU_EARTH,
+        way: TransferWay::Short,
+        revolutions: RevolutionBudget::SingleOnly,
+    })
     .unwrap_err();
     if let LambertError::DegeneratePositionVector { position, norm } = err {
         let which = match position {
             Position::R1 => "r1",
             Position::R2 => "r2",
         };
-        println!("  rejected: {which} has norm {norm:.3e} (below MIN_POSITION_NORM).");
+        println!("  rejected: {which} has norm {norm:.3e} (below internal floor).");
     }
 
     println!("\n=== 6. Non-positive scalar — distinct error variants ===");
     for (label, err) in [
         (
             "tof = 0",
-            lambert(
+            lambert(&LambertInput {
                 r1,
                 r2,
-                0.0,
-                MU_EARTH,
-                TransferWay::Short,
-                RevolutionBudget::SingleOnly,
-            ),
+                tof: 0.0,
+                mu: MU_EARTH,
+                way: TransferWay::Short,
+                revolutions: RevolutionBudget::SingleOnly,
+            }),
         ),
         (
             "mu = -1",
-            lambert(
+            lambert(&LambertInput {
                 r1,
                 r2,
-                1500.0,
-                -1.0,
-                TransferWay::Short,
-                RevolutionBudget::SingleOnly,
-            ),
+                tof: 1500.0,
+                mu: -1.0,
+                way: TransferWay::Short,
+                revolutions: RevolutionBudget::SingleOnly,
+            }),
         ),
     ] {
         match err {

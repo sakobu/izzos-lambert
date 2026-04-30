@@ -12,7 +12,7 @@
 
 use lambert_izzo::{
     LambertError, LambertSolutions, NonFiniteParameter, Position, RevolutionBudget, TransferWay,
-    solve_with_diagnostics as core_solve,
+    lambert as core_solve,
 };
 use serde::{Deserialize, Serialize};
 use tsify::Tsify;
@@ -58,7 +58,10 @@ pub struct LambertRequest {
     pub max_revs: u32,
 }
 
-/// One JavaScript-friendly Lambert trajectory plus solver diagnostics.
+/// One JavaScript-friendly Lambert trajectory.
+///
+/// Diagnostics are no longer attached per-solution — see
+/// [`LambertResponse::diagnostics`] for the per-branch iteration counts.
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize, Tsify)]
 #[serde(rename_all = "camelCase")]
 #[tsify(from_wasm_abi, into_wasm_abi)]
@@ -67,8 +70,6 @@ pub struct LambertSolutionOutput {
     pub v1: [f64; 3],
     /// Velocity at `r2`.
     pub v2: [f64; 3],
-    /// Solver diagnostics for this branch.
-    pub diagnostics: SolverDiagnosticsOutput,
 }
 
 /// One JavaScript-friendly multi-rev pair.
@@ -85,6 +86,10 @@ pub struct MultiRevPairOutput {
 }
 
 /// JavaScript-friendly solver response.
+///
+/// Always carries the single-revolution trajectory, every reachable
+/// multi-rev pair (in ascending `M` order), and the per-branch
+/// [`LambertDiagnosticsOutput`] mirroring the structure 1:1.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Tsify)]
 #[serde(rename_all = "camelCase")]
 #[tsify(from_wasm_abi, into_wasm_abi)]
@@ -93,17 +98,43 @@ pub struct LambertResponse {
     pub single: LambertSolutionOutput,
     /// Multi-revolution pairs in ascending `M` order.
     pub multi: Vec<MultiRevPairOutput>,
+    /// Per-branch solver diagnostics, structurally parallel to
+    /// `single` / `multi`.
+    pub diagnostics: LambertDiagnosticsOutput,
 }
 
-/// Solver diagnostic data for JavaScript callers.
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize, Tsify)]
+/// Solver diagnostic data for one converged branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Tsify)]
 #[serde(rename_all = "camelCase")]
 #[tsify(from_wasm_abi, into_wasm_abi)]
 pub struct SolverDiagnosticsOutput {
     /// Householder iterations used to converge.
     pub iters: u32,
-    /// Final Lancaster-Blanchard x value.
-    pub x: f64,
+}
+
+/// Diagnostics for one multi-rev pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Tsify)]
+#[serde(rename_all = "camelCase")]
+#[tsify(from_wasm_abi, into_wasm_abi)]
+pub struct MultiRevPairDiagnosticsOutput {
+    /// Branch revolution count (`>= 1`).
+    pub n_revs: u32,
+    /// Long-period branch diagnostics.
+    pub long_period: SolverDiagnosticsOutput,
+    /// Short-period branch diagnostics.
+    pub short_period: SolverDiagnosticsOutput,
+}
+
+/// Diagnostics structure mirroring [`LambertResponse`].
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Tsify)]
+#[serde(rename_all = "camelCase")]
+#[tsify(from_wasm_abi, into_wasm_abi)]
+pub struct LambertDiagnosticsOutput {
+    /// Single-rev solver diagnostics.
+    pub single: SolverDiagnosticsOutput,
+    /// Multi-rev pair diagnostics in the same order as
+    /// [`LambertResponse::multi`].
+    pub multi: Vec<MultiRevPairDiagnosticsOutput>,
 }
 
 /// Mirrors [`lambert_izzo::Position`] with TS-friendly tagging.
@@ -268,6 +299,29 @@ impl From<LambertError> for LambertErrorOutput {
     }
 }
 
+/// One element of a batch response: success carries the response, failure
+/// carries the structured error.
+///
+/// Serialized as a tagged union: `{ kind: "ok", response: ... }` or
+/// `{ kind: "err", error: ... }`. JS can narrow on `result.kind`.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Tsify)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+#[tsify(from_wasm_abi, into_wasm_abi)]
+pub enum BatchResult {
+    /// The solver succeeded; `response` carries the trajectories and
+    /// diagnostics.
+    Ok {
+        /// Successful response.
+        response: LambertResponse,
+    },
+    /// The solver rejected the input or failed to converge; `error`
+    /// carries the structured failure.
+    Err {
+        /// Structured failure.
+        error: LambertErrorOutput,
+    },
+}
+
 /// Solve a Lambert request from JavaScript.
 ///
 /// # Invariants
@@ -297,6 +351,27 @@ pub fn solve_lambert(request: LambertRequest) -> Result<LambertResponse, JsValue
     })
 }
 
+/// Solve a batch of Lambert requests from JavaScript.
+///
+/// Returns one [`BatchResult`] per request, in input order. A failed
+/// request does not stop processing of the rest — each element is
+/// independent.
+///
+/// # Invariants / Validity / Errors
+///
+/// Per-element, same as [`solve_lambert`].
+#[wasm_bindgen(js_name = solveLambertBatch)]
+#[must_use]
+pub fn solve_lambert_batch(requests: Vec<LambertRequest>) -> Vec<BatchResult> {
+    requests
+        .into_iter()
+        .map(|request| match solve_lambert_request(request) {
+            Ok(response) => BatchResult::Ok { response },
+            Err(error) => BatchResult::Err { error },
+        })
+        .collect()
+}
+
 /// Solve a Lambert request using only Rust types.
 ///
 /// This function exists so the wrapper contract can be tested without a
@@ -320,53 +395,62 @@ pub fn solve_lambert_request(
     request: LambertRequest,
 ) -> Result<LambertResponse, LambertErrorOutput> {
     let revolutions = RevolutionBudget::up_to(request.max_revs);
-    let (solutions, diagnostics) = core_solve(
-        request.r1,
-        request.r2,
-        request.tof,
-        request.mu,
-        request.way.into(),
+    let solutions = core_solve(&lambert_izzo::LambertInput {
+        r1: request.r1,
+        r2: request.r2,
+        tof: request.tof,
+        mu: request.mu,
+        way: request.way.into(),
         revolutions,
-    )
+    })
     .map_err(LambertErrorOutput::from)?;
-    Ok(into_response(&solutions, &diagnostics))
+    Ok(into_response(&solutions))
 }
 
-fn into_response(
-    solutions: &LambertSolutions,
-    diagnostics: &lambert_izzo::LambertDiagnostics,
-) -> LambertResponse {
+fn into_response(solutions: &LambertSolutions) -> LambertResponse {
     let single = LambertSolutionOutput {
         v1: solutions.single.v1,
         v2: solutions.single.v2,
-        diagnostics: SolverDiagnosticsOutput {
-            iters: diagnostics.single.iters,
-            x: diagnostics.single.lancaster_blanchard_x,
-        },
     };
-    let multi = solutions
+
+    let n = solutions.multi.len();
+    let mut multi = Vec::with_capacity(n);
+    let mut multi_diagnostics = Vec::with_capacity(n);
+    for (pair, dpair) in solutions
         .multi
         .iter()
-        .zip(diagnostics.multi.iter())
-        .map(|(pair, dpair)| MultiRevPairOutput {
+        .zip(solutions.diagnostics.multi.iter())
+    {
+        multi.push(MultiRevPairOutput {
             n_revs: pair.n_revs,
             long_period: LambertSolutionOutput {
                 v1: pair.long_period.v1,
                 v2: pair.long_period.v2,
-                diagnostics: SolverDiagnosticsOutput {
-                    iters: dpair.long_period.iters,
-                    x: dpair.long_period.lancaster_blanchard_x,
-                },
             },
             short_period: LambertSolutionOutput {
                 v1: pair.short_period.v1,
                 v2: pair.short_period.v2,
-                diagnostics: SolverDiagnosticsOutput {
-                    iters: dpair.short_period.iters,
-                    x: dpair.short_period.lancaster_blanchard_x,
-                },
             },
-        })
-        .collect();
-    LambertResponse { single, multi }
+        });
+        multi_diagnostics.push(MultiRevPairDiagnosticsOutput {
+            n_revs: dpair.n_revs,
+            long_period: SolverDiagnosticsOutput {
+                iters: dpair.long_period.iters,
+            },
+            short_period: SolverDiagnosticsOutput {
+                iters: dpair.short_period.iters,
+            },
+        });
+    }
+
+    LambertResponse {
+        single,
+        multi,
+        diagnostics: LambertDiagnosticsOutput {
+            single: SolverDiagnosticsOutput {
+                iters: solutions.diagnostics.single.iters,
+            },
+            multi: multi_diagnostics,
+        },
+    }
 }

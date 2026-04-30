@@ -103,8 +103,7 @@ pub enum LambertError {
 
     /// One position vector has near-zero norm; geometry undefined.
     ///
-    /// Triggered when `|r|` is below
-    /// [`crate::constants::MIN_POSITION_NORM`].
+    /// Triggered when `|r|` is below an internal floor (`1e-15` km).
     #[error("degenerate position vector {position}: norm = {norm}")]
     DegeneratePositionVector {
         /// Which of the two positions is degenerate.
@@ -115,8 +114,8 @@ pub enum LambertError {
 
     /// `r1` and `r2` are colinear; the transfer plane is undefined.
     ///
-    /// Triggered when `|r1 × r2| / (|r1| · |r2|)` is below
-    /// [`crate::constants::COLINEARITY_TOL`].
+    /// Triggered when `|r1 × r2| / (|r1| · |r2|)` is below an internal
+    /// floor (`1e-15`, scale-invariant).
     #[error("colinear position vectors: |r1 × r2| / (|r1| |r2|) = {sin_angle:.3e}")]
     CollinearGeometry {
         /// `|r1 × r2| / (|r1| · |r2|)` — the sine of the transfer angle (unitless).

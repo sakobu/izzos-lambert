@@ -5,6 +5,18 @@
 //!
 //! Inline `Eq. N` / `Algorithm N` references in the source point to that paper.
 //!
+//! # Public API
+//!
+//! Two entry points:
+//!
+//! - [`lambert`] — single Lambert solve from a [`LambertInput`].
+//! - `lambert_par` (`rayon` feature) — parallel batch solve over a slice
+//!   of [`LambertInput`]s.
+//!
+//! Both return [`LambertSolutions`], which always carries the
+//! single-revolution trajectory, every reachable multi-rev pair, and the
+//! per-branch [`SolverDiagnostics`] (Householder iteration counts).
+//!
 //! # Units
 //!
 //! The crate is unit-agnostic at the type level — all quantities are plain
@@ -28,8 +40,8 @@
 //! code's variable names carry the frame info.
 //!
 //! Position and velocity vectors are plain `[f64; 3]` arrays; the crate has
-//! no hard math-library dependency. Both [`nalgebra::Vector3<f64>`] and
-//! [`glam::DVec3`] already convert to/from `[f64; 3]` natively, so callers
+//! no hard math-library dependency. Both `nalgebra::Vector3<f64>` and
+//! `glam::DVec3` already convert to/from `[f64; 3]` natively, so callers
 //! using either library can pass and receive vectors without an explicit
 //! interop layer.
 //!
@@ -46,20 +58,24 @@
 //! # Example
 //!
 //! ```
-//! use lambert_izzo::{lambert, LambertError, RevolutionBudget, TransferWay};
+//! use lambert_izzo::{lambert, LambertError, LambertInput, RevolutionBudget, TransferWay};
 //!
 //! # fn main() -> Result<(), LambertError> {
 //! // LEO → LEO 90° transfer at 7000 km altitude.
 //! let mu = 398_600.4418;
-//! let r1 = [7000.0, 0.0, 0.0];
-//! let r2 = [0.0, 7000.0, 0.0];
-//! let tof = core::f64::consts::PI / 2.0 * (7000.0_f64.powi(3) / mu).sqrt();
+//! let r = 7000.0_f64;
+//! let input = LambertInput {
+//!     r1: [r, 0.0, 0.0],
+//!     r2: [0.0, r, 0.0],
+//!     tof: core::f64::consts::PI / 2.0 * (r.powi(3) / mu).sqrt(),
+//!     mu,
+//!     way: TransferWay::Short,
+//!     revolutions: RevolutionBudget::SingleOnly,
+//! };
 //!
-//! let solutions = lambert(
-//!     r1, r2, tof, mu,
-//!     TransferWay::Short, RevolutionBudget::SingleOnly,
-//! )?;
+//! let solutions = lambert(&input)?;
 //! assert!(solutions.multi.is_empty());
+//! assert!(solutions.diagnostics.single.iters > 0);
 //! let v1 = solutions.single.v1;
 //! # let _ = v1;
 //! # Ok(())
@@ -72,9 +88,8 @@
 //!
 //! - **`serde`** — derives `Serialize` + `Deserialize` on every public
 //!   type, including [`LambertError`]. Stays `no_std`-compatible.
-//! - **`rayon`** — enables [`lambert_par_iter`] for parallel batch
-//!   evaluation. Pulls in `std` transitively and is **not**
-//!   `no_std`-compatible.
+//! - **`rayon`** — enables `lambert_par` for parallel batch evaluation.
+//!   Pulls in `std` transitively and is **not** `no_std`-compatible.
 
 #![cfg_attr(not(test), no_std)]
 #![warn(missing_docs)]
@@ -86,8 +101,6 @@
     clippy::unreachable
 )]
 #![allow(clippy::module_name_repetitions)] // LambertError, LambertSolution, LambertSolutions, LambertDiagnostics
-
-use arrayvec::ArrayVec;
 
 /// Hard upper bound on the number of multi-revolution pairs returned.
 ///
@@ -151,14 +164,22 @@ impl RevolutionBudget {
     }
 }
 
-pub mod constants;
+mod constants;
 mod error;
 mod geometry;
+mod multi_rev_array;
+mod multi_rev_diagnostics;
+mod multi_rev_set;
 mod root_finding;
 mod tof;
 mod vec3;
 
+#[cfg(test)]
+mod tests;
+
 pub use error::{LambertError, NonFiniteParameter, Position};
+pub use multi_rev_diagnostics::MultiRevDiagnostics;
+pub use multi_rev_set::MultiRevSet;
 
 use geometry::Geometry;
 use root_finding::{Root, find_xy};
@@ -166,9 +187,7 @@ use root_finding::{Root, find_xy};
 /// One Lambert transfer trajectory.
 ///
 /// Pure trajectory data — start and end velocities. Solver diagnostics
-/// (iteration count, Lancaster–Blanchard `x`) are kept out of this type so
-/// the common API path is lean; use [`solve_with_diagnostics`] when you
-/// need them.
+/// live alongside the trajectory in [`LambertSolutions::diagnostics`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LambertSolution {
@@ -182,24 +201,27 @@ pub struct LambertSolution {
 /// for a given revolution count.
 ///
 /// The Izzo formulation admits exactly two trajectories for each `M ≥ 1`:
-/// the long-period branch (smaller `x`, more time near apoapsis) and the
-/// short-period branch (larger `x`, more time near periapsis).
+/// the long-period branch (more time near apoapsis) and the short-period
+/// branch (more time near periapsis).
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MultiRevPair {
     /// Branch revolution count (`>= 1`).
     pub n_revs: u32,
-    /// Long-period trajectory (smaller Lancaster–Blanchard `x`).
+    /// Long-period trajectory.
     pub long_period: LambertSolution,
-    /// Short-period trajectory (larger Lancaster–Blanchard `x`).
+    /// Short-period trajectory.
     pub short_period: LambertSolution,
 }
 
 /// All Lambert trajectories for a given boundary problem and revolution budget.
 ///
-/// Always carries the single-revolution trajectory; `multi` lists every
-/// reachable multi-rev pair in ascending `M` order, capped at
-/// [`MAX_MULTI_REV_PAIRS`].
+/// Always carries:
+/// - `single` — the single-revolution trajectory;
+/// - `multi` — every reachable multi-rev pair in ascending `M` order,
+///   bounded by [`MAX_MULTI_REV_PAIRS`];
+/// - `diagnostics` — per-branch [`SolverDiagnostics`] (Householder iteration
+///   counts), structurally parallel to `single` / `multi`.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LambertSolutions {
@@ -208,40 +230,22 @@ pub struct LambertSolutions {
     /// Multi-revolution pairs in ascending `M` order; empty for
     /// [`RevolutionBudget::SingleOnly`] or when no multi-rev branches are
     /// feasible for the given time of flight.
-    pub multi: ArrayVec<MultiRevPair, MAX_MULTI_REV_PAIRS>,
-}
-
-/// Solutions for both transfer ways, computed from the same boundary inputs.
-///
-/// Returned by [`lambert_both_ways`]. The two halves are independent —
-/// either one may be empty in `multi` while the other is populated, since
-/// `T_min(M)` differs between the short and long forms.
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct BothWaysSolutions {
-    /// Short-way trajectories (`θ ≤ π`).
-    pub short: LambertSolutions,
-    /// Long-way trajectories (`θ > π`).
-    pub long: LambertSolutions,
+    pub multi: MultiRevSet,
+    /// Per-branch solver diagnostics, structurally parallel to
+    /// `single` / `multi`.
+    pub diagnostics: LambertDiagnostics,
 }
 
 /// Diagnostic data for one converged Householder solve.
-///
-/// Useful for debugging or distinguishing multi-rev branches; not part of
-/// the trajectory answer. Returned by [`solve_with_diagnostics`].
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SolverDiagnostics {
     /// Householder iterations used to converge.
     pub iters: u32,
-    /// Final value of Izzo's free parameter (Lancaster–Blanchard variable),
-    /// dimensionless. For a given `M`, the long-period branch has the
-    /// smaller value, the short-period branch the larger.
-    pub lancaster_blanchard_x: f64,
 }
 
 /// Diagnostics for one multi-rev pair.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MultiRevPairDiagnostics {
     /// Branch revolution count (`>= 1`).
@@ -254,21 +258,22 @@ pub struct MultiRevPairDiagnostics {
 
 /// Diagnostics structure mirroring [`LambertSolutions`].
 ///
-/// Returned alongside the solutions by [`solve_with_diagnostics`].
+/// Carried inline by every [`LambertSolutions`]; the `single` / `multi`
+/// layout matches the corresponding solution fields one-to-one.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LambertDiagnostics {
     /// Single-rev solver diagnostics.
     pub single: SolverDiagnostics,
-    /// Multi-rev pair diagnostics in the same order as `LambertSolutions::multi`.
-    pub multi: ArrayVec<MultiRevPairDiagnostics, MAX_MULTI_REV_PAIRS>,
+    /// Multi-rev pair diagnostics in the same order as
+    /// [`LambertSolutions::multi`].
+    pub multi: MultiRevDiagnostics,
 }
 
-/// One Lambert call's inputs, packaged for batch processing.
+/// One Lambert call's inputs.
 ///
-/// Same fields as [`lambert`]'s parameter list, in struct form so callers
-/// can build a slice (e.g. for porkchop plots) and stream it through
-/// [`lambert_iter`] or [`lambert_par_iter`].
+/// All scalar fields use the crate's documented unit convention (km, s,
+/// km/s, km³/s²) when read in SI; any consistent unit system works.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LambertInput {
@@ -286,84 +291,6 @@ pub struct LambertInput {
     pub revolutions: RevolutionBudget,
 }
 
-impl LambertInput {
-    /// Solve this single input — convenience wrapper around [`lambert`].
-    ///
-    /// # Errors
-    ///
-    /// Same conditions as [`lambert`].
-    pub fn solve(self) -> Result<LambertSolutions, LambertError> {
-        lambert(self.r1, self.r2, self.tof, self.mu, self.way, self.revolutions)
-    }
-}
-
-/// Sequential batch iterator over Lambert inputs.
-///
-/// Allocation-free; just maps over the input slice. Useful for
-/// porkchop-plot-style workloads where the caller computes one Lambert
-/// solution per `(departure, arrival)` cell.
-///
-/// For parallel evaluation, enable the `rayon` feature and use
-/// [`lambert_par_iter`].
-///
-/// # Invariants
-///
-/// Per-input — same as [`lambert`].
-///
-/// # Validity / near-degenerate behavior
-///
-/// Per-input — same as [`lambert`].
-///
-/// # Returns
-///
-/// A lazy iterator that yields one `Result<LambertSolutions, LambertError>`
-/// per input, in input order. Pulls one input at a time; nothing is solved
-/// until the iterator is consumed.
-///
-/// # Errors
-///
-/// Each yielded item is independent — an input that errors does not
-/// affect the others. Per-input error variants are the same as [`lambert`].
-pub fn lambert_iter(
-    inputs: &[LambertInput],
-) -> impl Iterator<Item = Result<LambertSolutions, LambertError>> + '_ {
-    inputs.iter().map(|input| input.solve())
-}
-
-/// Parallel batch iterator over Lambert inputs (Rayon-backed).
-///
-/// Same semantics as [`lambert_iter`], but evaluates inputs concurrently
-/// across the Rayon thread pool. Available under the `rayon` feature.
-///
-/// # Invariants
-///
-/// Per-input — same as [`lambert`].
-///
-/// # Validity / near-degenerate behavior
-///
-/// Per-input — same as [`lambert`].
-///
-/// # Returns
-///
-/// A Rayon `ParallelIterator` yielding one `Result<LambertSolutions,
-/// LambertError>` per input. Output ordering is preserved when the caller
-/// consumes via `.collect::<Vec<_>>()` or any ordered Rayon adaptor;
-/// reduce-style consumers (`.for_each`, `.sum`) see results in arbitrary
-/// order.
-///
-/// # Errors
-///
-/// Each yielded item is independent — one input failing does not stop the
-/// other parallel tasks. Per-input error variants are the same as [`lambert`].
-#[cfg(feature = "rayon")]
-#[allow(clippy::must_use_candidate)] // Rayon's ParallelIterator isn't #[must_use]; the caller is expected to chain `.for_each` / `.collect`.
-pub fn lambert_par_iter(
-    inputs: &[LambertInput],
-) -> impl rayon::iter::ParallelIterator<Item = Result<LambertSolutions, LambertError>> + '_ {
-    use rayon::prelude::*;
-    inputs.par_iter().map(|input| input.solve())
-}
-
 /// Solve Lambert's boundary-value problem using Izzo's revisited algorithm.
 ///
 /// Householder iteration over Lancaster's free parameter `x`, dispatching
@@ -372,9 +299,9 @@ pub fn lambert_par_iter(
 /// `r2` in any consistent inertial frame and the returned velocities are
 /// in that same frame.
 ///
-/// Returns the always-present single-revolution trajectory plus every
+/// Returns the always-present single-revolution trajectory, every
 /// reachable multi-rev branch up to `revolutions.max()` (clamped at
-/// [`MAX_MULTI_REV_PAIRS`]).
+/// [`MAX_MULTI_REV_PAIRS`]), and the per-branch [`SolverDiagnostics`].
 ///
 /// All quantities are dimensionally homogeneous — pass any consistent
 /// unit system. The crate's docs and examples use km / km/s / s / km³/s².
@@ -384,165 +311,81 @@ pub fn lambert_par_iter(
 /// All preconditions are validated at entry and returned as `Err(...)` on
 /// violation — never panicked.
 ///
-/// - `tof > 0`
-/// - `mu > 0`
-/// - `r1`, `r2`, `tof`, and `mu` are finite.
-/// - `|r1| >= constants::MIN_POSITION_NORM`
-/// - `|r2| >= constants::MIN_POSITION_NORM`
+/// - `input.tof > 0`
+/// - `input.mu > 0`
+/// - `input.r1`, `input.r2`, `input.tof`, and `input.mu` are finite.
+/// - `|input.r1|` and `|input.r2|` exceed an internal floor (`1e-15`).
 /// - Transfer angle ∉ {0, π}, equivalently
-///   `|r1 × r2| / (|r1| · |r2|) >= constants::COLINEARITY_TOL`.
+///   `|r1 × r2| / (|r1| · |r2|)` exceeds an internal floor (`1e-15`).
 ///
 /// # Validity / near-degenerate behavior
 ///
 /// - **Transfer angle near `0` or `π`** — the transfer plane is undefined;
 ///   returns [`LambertError::CollinearGeometry`]. Callers near these
 ///   boundaries should perturb one position by a tiny off-plane offset.
-/// - **Near-parabolic (`|x − 1| ≤ 0.01`)** — the Lagrange and Lancaster TOF
-///   formulations lose precision; the solver switches to Battin's
-///   hypergeometric series (Izzo Eq. 20) automatically.
+/// - **Near-parabolic** — the Lagrange and Lancaster TOF formulations lose
+///   precision near `x = 1`; the solver switches to Battin's hypergeometric
+///   series (Izzo Eq. 20) automatically.
 /// - **Hyperbolic transfers (`x > 1`)** — admitted on the single-rev branch;
 ///   multi-revolution solutions do not exist on a hyperbola and are silently
 ///   skipped.
 /// - **Multi-rev infeasibility** — for `M ≥ 1`, the branch admits a solution
-///   only when `tof ≥ T_min(M, λ)`. Higher-`M` branches are dropped from
-///   the returned `multi` vector when their `T_min` exceeds the requested TOF.
-///
-/// # Arguments
-///
-/// - `r1` — initial position vector, any consistent inertial frame.
-/// - `r2` — final position vector, same frame as `r1`.
-/// - `tof` — time of flight from `r1` to `r2`, strictly positive.
-/// - `mu` — gravitational parameter of the central body, strictly positive.
-/// - `way` — [`TransferWay::Short`] (`θ ≤ π`) or [`TransferWay::Long`]
-///   (`θ > π`); prograde vs retrograde is set independently by the order
-///   of `(r1, r2)`, since `r1 × r2` defines the orbit's angular-momentum
-///   direction.
-/// - `revolutions` — see [`RevolutionBudget`]; `SingleOnly` skips the
-///   multi-rev search entirely, `UpTo(M)` searches `1..=M` revolutions
-///   (clamped at [`MAX_MULTI_REV_PAIRS`]).
+///   only when `tof ≥ T_min(M, λ)`. Higher-`M` branches are dropped from the
+///   returned `multi` set when their `T_min` exceeds the requested TOF.
 ///
 /// # Returns
 ///
-/// [`LambertSolutions`] with the always-present `single` trajectory and a
-/// `multi` array of [`MultiRevPair`] entries in ascending `M` order. The
-/// `multi` array is empty for [`RevolutionBudget::SingleOnly`] and may be
-/// shorter than `revolutions.max()` if higher-`M` branches are infeasible
-/// for the requested `tof`. Each [`LambertSolution`] carries the start
-/// and end velocities `(v1, v2)` in the input frame and units.
+/// [`LambertSolutions`] with the always-present `single` trajectory, a
+/// `multi` set of [`MultiRevPair`] entries in ascending `M` order, and the
+/// matching [`LambertDiagnostics`]. The `multi` set is empty for
+/// [`RevolutionBudget::SingleOnly`] and may be shorter than
+/// `revolutions.max()` if higher-`M` branches are infeasible. Each
+/// [`LambertSolution`] carries the start and end velocities `(v1, v2)` in
+/// the input frame and units.
 ///
 /// # Errors
 ///
-/// - [`LambertError::NonFiniteInput`] — any public scalar input or position
-///   vector component is `NaN`, `+inf`, or `-inf`.
+/// - [`LambertError::NonFiniteInput`] — any scalar input or position vector
+///   component is `NaN`, `+inf`, or `-inf`.
 /// - [`LambertError::NonPositiveTimeOfFlight`] — `tof <= 0`.
 /// - [`LambertError::NonPositiveMu`] — `mu <= 0`.
-/// - [`LambertError::DegeneratePositionVector`] — `|r1|` or `|r2|` below
-///   [`constants::MIN_POSITION_NORM`].
-/// - [`LambertError::CollinearGeometry`] — `|r1 × r2| / (|r1| · |r2|)` below
-///   [`constants::COLINEARITY_TOL`].
+/// - [`LambertError::DegeneratePositionVector`] — `|r1|` or `|r2|` below the
+///   internal position-norm floor.
+/// - [`LambertError::CollinearGeometry`] — transfer plane undefined.
 /// - [`LambertError::NoConvergence`] / [`LambertError::SingularDenominator`]
 ///   — Householder iteration failed.
-pub fn lambert(
-    r1: [f64; 3],
-    r2: [f64; 3],
-    tof: f64,
-    mu: f64,
-    way: TransferWay,
-    revolutions: RevolutionBudget,
-) -> Result<LambertSolutions, LambertError> {
-    let geom = Geometry::from_inputs(r1, r2, tof, mu, way)?;
-    let roots = find_xy(&geom, revolutions)?;
-    Ok(reconstruct_solutions(&geom, &roots))
+pub fn lambert(input: &LambertInput) -> Result<LambertSolutions, LambertError> {
+    let geom = Geometry::from_inputs(input.r1, input.r2, input.tof, input.mu, input.way)?;
+    let roots = find_xy(&geom, input.revolutions)?;
+    Ok(build_solutions(&geom, &roots))
 }
 
-/// Like [`lambert`], but also returns the per-branch [`SolverDiagnostics`]
-/// (iteration count and final Lancaster–Blanchard `x`).
+/// Parallel batch solver over a slice of [`LambertInput`]s (Rayon-backed).
 ///
-/// The diagnostics structure mirrors the solutions structure 1:1 — `single`
-/// matches `single`, `multi[i]` matches `multi[i]`.
+/// Yields one `Result<LambertSolutions, LambertError>` per input. Output
+/// ordering is preserved when the caller consumes via `.collect::<Vec<_>>()`
+/// or any indexed Rayon adaptor; reduce-style consumers (`.for_each`,
+/// `.sum`) see results in arbitrary order.
 ///
 /// # Invariants
 ///
-/// Same as [`lambert`].
+/// Per-input — same as [`lambert`].
 ///
 /// # Validity / near-degenerate behavior
 ///
-/// Same as [`lambert`].
-///
-/// # Arguments
-///
-/// Same as [`lambert`].
-///
-/// # Returns
-///
-/// A `(LambertSolutions, LambertDiagnostics)` pair. The diagnostics layout
-/// is parallel to the solutions: `diagnostics.single` corresponds to
-/// `solutions.single`, and `diagnostics.multi[i]` corresponds to
-/// `solutions.multi[i]` (same index, same `n_revs`, in ascending order).
-/// Each [`SolverDiagnostics`] entry carries the Householder iteration
-/// count and the converged Lancaster–Blanchard `x` for that branch.
+/// Per-input — same as [`lambert`].
 ///
 /// # Errors
 ///
-/// Same as [`lambert`].
-pub fn solve_with_diagnostics(
-    r1: [f64; 3],
-    r2: [f64; 3],
-    tof: f64,
-    mu: f64,
-    way: TransferWay,
-    revolutions: RevolutionBudget,
-) -> Result<(LambertSolutions, LambertDiagnostics), LambertError> {
-    let geom = Geometry::from_inputs(r1, r2, tof, mu, way)?;
-    let roots = find_xy(&geom, revolutions)?;
-    let solutions = reconstruct_solutions(&geom, &roots);
-    let diagnostics = collect_diagnostics(&roots);
-    Ok((solutions, diagnostics))
-}
-
-/// Solve both the short-way and long-way Lambert problems for the same
-/// boundary inputs in one call.
-///
-/// Convenience for porkchop-plot and rendezvous-design callers that need
-/// both traversal directions. Equivalent to calling [`lambert`] twice with
-/// `TransferWay::Short` and `TransferWay::Long`; either half may have an
-/// empty `multi` while the other is populated, since `T_min(M)` differs
-/// between the two formulations.
-///
-/// # Invariants
-///
-/// Same as [`lambert`].
-///
-/// # Validity / near-degenerate behavior
-///
-/// Same as [`lambert`].
-///
-/// # Arguments
-///
-/// Same as [`lambert`], minus `way` — both `Short` and `Long` are solved.
-///
-/// # Returns
-///
-/// A [`BothWaysSolutions`] with `short` and `long` fields, each a complete
-/// [`LambertSolutions`] for the corresponding traversal direction. The two
-/// halves are independent: their `multi` arrays may have different lengths
-/// because `T_min(M, λ)` differs between short-way (`λ > 0`) and long-way
-/// (`λ < 0`) formulations.
-///
-/// # Errors
-///
-/// Same as [`lambert`]. If either direction errors, the entire call errors —
-/// the two ways share input validation.
-pub fn lambert_both_ways(
-    r1: [f64; 3],
-    r2: [f64; 3],
-    tof: f64,
-    mu: f64,
-    revolutions: RevolutionBudget,
-) -> Result<BothWaysSolutions, LambertError> {
-    let short = lambert(r1, r2, tof, mu, TransferWay::Short, revolutions)?;
-    let long = lambert(r1, r2, tof, mu, TransferWay::Long, revolutions)?;
-    Ok(BothWaysSolutions { short, long })
+/// Each yielded item is independent — one input failing does not stop the
+/// other parallel tasks. Per-input error variants are the same as [`lambert`].
+#[cfg(feature = "rayon")]
+#[allow(clippy::must_use_candidate)] // Rayon's IndexedParallelIterator isn't #[must_use]; the caller is expected to chain `.for_each` / `.collect`.
+pub fn lambert_par(
+    inputs: &[LambertInput],
+) -> impl rayon::iter::IndexedParallelIterator<Item = Result<LambertSolutions, LambertError>> + '_ {
+    use rayon::prelude::*;
+    inputs.par_iter().map(lambert)
 }
 
 #[allow(clippy::similar_names)] // v_r1/v_r2/v_t1/v_t2 are radial/tangential velocity components at points 1/2 — Izzo §2.
@@ -573,639 +416,38 @@ fn reconstruct(geom: &Geometry, root: &Root) -> LambertSolution {
     LambertSolution { v1, v2 }
 }
 
-fn reconstruct_solutions(geom: &Geometry, roots: &root_finding::Roots) -> LambertSolutions {
-    let mut multi: ArrayVec<MultiRevPair, MAX_MULTI_REV_PAIRS> = ArrayVec::new();
+fn build_solutions(geom: &Geometry, roots: &root_finding::Roots) -> LambertSolutions {
+    let single = reconstruct(geom, &roots.single);
+    let single_diagnostics = SolverDiagnostics {
+        iters: roots.single.iters,
+    };
+
+    let mut multi = MultiRevSet::new();
+    let mut multi_diagnostics = MultiRevDiagnostics::new();
     for pair in &roots.multi {
-        // Capacity by construction — roots.multi is also bounded at MAX_MULTI_REV_PAIRS.
-        let _ = multi.try_push(MultiRevPair {
+        // `try_push` (not `push`) because lib code is panic-free; `roots.multi`
+        // is itself bounded at `MAX_MULTI_REV_PAIRS`, so the push cannot fail.
+        multi.try_push(MultiRevPair {
             n_revs: pair.n_revs,
             long_period: reconstruct(geom, &pair.long_period),
             short_period: reconstruct(geom, &pair.short_period),
         });
-    }
-    LambertSolutions {
-        single: reconstruct(geom, &roots.single),
-        multi,
-    }
-}
-
-fn diagnostics_of(root: &Root) -> SolverDiagnostics {
-    SolverDiagnostics {
-        iters: root.iters,
-        lancaster_blanchard_x: root.x,
-    }
-}
-
-fn collect_diagnostics(roots: &root_finding::Roots) -> LambertDiagnostics {
-    let mut multi: ArrayVec<MultiRevPairDiagnostics, MAX_MULTI_REV_PAIRS> = ArrayVec::new();
-    for pair in &roots.multi {
-        let _ = multi.try_push(MultiRevPairDiagnostics {
+        multi_diagnostics.try_push(MultiRevPairDiagnostics {
             n_revs: pair.n_revs,
-            long_period: diagnostics_of(&pair.long_period),
-            short_period: diagnostics_of(&pair.short_period),
+            long_period: SolverDiagnostics {
+                iters: pair.long_period.iters,
+            },
+            short_period: SolverDiagnostics {
+                iters: pair.short_period.iters,
+            },
         });
     }
-    LambertDiagnostics {
-        single: diagnostics_of(&roots.single),
+    LambertSolutions {
+        single,
         multi,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #![allow(clippy::similar_names, clippy::unwrap_used)] // r/r1/r2 test scenario inputs follow paper convention; tests are exempt from the lib's no-unwrap rule.
-
-    use super::*;
-    use core::f64::consts::PI;
-    use glam::DVec3;
-    use lambert_izzo_test_support::bodies::{AU, MU_EARTH, MU_SUN};
-    use lambert_izzo_test_support::kepler::propagate as kepler_propagate;
-    use lambert_izzo_test_support::rand_unit_vec;
-
-    fn approx(a: f64, b: f64, tol: f64) -> bool {
-        (a - b).abs() < tol
-    }
-
-    fn vec_sub_norm(a: [f64; 3], b: [f64; 3]) -> f64 {
-        (DVec3::from_array(a) - DVec3::from_array(b)).length()
-    }
-
-    #[test]
-    fn quarter_circle_leo() {
-        // 90° transfer along a circular LEO at r = 7000 km.
-        let r = 7000.0;
-        let mu = MU_EARTH;
-        let v_circ = (mu / r).sqrt();
-        let period = 2.0 * PI * (r.powi(3) / mu).sqrt();
-
-        let r1 = [r, 0.0, 0.0];
-        let r2 = [0.0, r, 0.0];
-        let sols = lambert(
-            r1,
-            r2,
-            period / 4.0,
-            mu,
-            TransferWay::Short,
-            RevolutionBudget::SingleOnly,
-        )
-        .unwrap();
-        assert!(sols.multi.is_empty());
-        assert!(vec_sub_norm(sols.single.v1, [0.0, v_circ, 0.0]) < 1e-9);
-        assert!(vec_sub_norm(sols.single.v2, [-v_circ, 0.0, 0.0]) < 1e-9);
-    }
-
-    #[test]
-    fn long_way_quarter_circle_leo() {
-        // 270° transfer along the same circular LEO.
-        let r = 7000.0;
-        let mu = MU_EARTH;
-        let v_circ = (mu / r).sqrt();
-        let period = 2.0 * PI * (r.powi(3) / mu).sqrt();
-
-        let r1 = [r, 0.0, 0.0];
-        let r2 = [0.0, r, 0.0];
-        let sols = lambert(
-            r1,
-            r2,
-            3.0 * period / 4.0,
-            mu,
-            TransferWay::Long,
-            RevolutionBudget::SingleOnly,
-        )
-        .unwrap();
-        assert!(sols.multi.is_empty());
-        assert!(vec_sub_norm(sols.single.v1, [0.0, -v_circ, 0.0]) < 1e-9);
-        assert!(vec_sub_norm(sols.single.v2, [v_circ, 0.0, 0.0]) < 1e-9);
-    }
-
-    #[test]
-    fn earth_mars_hohmann() {
-        // Heliocentric Hohmann transfer Earth (1 AU) → Mars (1.524 AU).
-        let mu = MU_SUN;
-        let r1n = AU;
-        let r2n = 1.524 * AU;
-        let a = f64::midpoint(r1n, r2n);
-        let tof = PI * (a.powi(3) / mu).sqrt();
-
-        let r1 = [r1n, 0.0, 0.0];
-        // 1 km off-plane to dodge the colinearity edge case.
-        let r2 = [-r2n, 1.0, 0.0];
-        let sols = lambert(
-            r1,
-            r2,
-            tof,
-            mu,
-            TransferWay::Short,
-            RevolutionBudget::SingleOnly,
-        )
-        .unwrap();
-        // Periapsis velocity: vis-viva at r = 1 AU on the transfer ellipse.
-        let v_peri = (mu * (2.0 / r1n - 1.0 / a)).sqrt();
-        // Tolerance ~1 m/s — the off-plane perturbation moves things slightly.
-        assert!(approx(DVec3::from_array(sols.single.v1).length(), v_peri, 1e-3));
-    }
-
-    #[test]
-    fn multi_rev_branches() {
-        // Long-tof Earth-orbit phasing — admits multiple multi-rev branches.
-        let mu = MU_EARTH;
-        let r1 = [8000.0, 0.0, 0.0];
-        let r2 = [5600.0, 5600.0, 0.0];
-        let period = 2.0 * PI * (8000.0_f64.powi(3) / mu).sqrt();
-        let sols = lambert(
-            r1,
-            r2,
-            5.0 * period,
-            mu,
-            TransferWay::Short,
-            RevolutionBudget::up_to(3),
-        )
-        .unwrap();
-        assert!(!sols.multi.is_empty(), "no multi-rev pairs returned");
-        let r1n = DVec3::from_array(r1).length();
-        for pair in &sols.multi {
-            for s in [pair.long_period, pair.short_period] {
-                let v1 = DVec3::from_array(s.v1);
-                let energy = 0.5 * v1.dot(v1) - mu / r1n;
-                assert!(energy.is_finite());
-            }
-        }
-    }
-
-    #[test]
-    fn round_trip_kepler_check_single_rev() {
-        // Propagate v1 with a universal-variable Kepler integrator and confirm
-        // we land within numerical tolerance of r2.
-        let mu = MU_EARTH;
-        let r1 = [10_500.0, 1400.0, 700.0];
-        let r2 = [-2800.0, 9100.0, -1400.0];
-        let tof = 4500.0;
-        let sols = lambert(
-            r1,
-            r2,
-            tof,
-            mu,
-            TransferWay::Short,
-            RevolutionBudget::SingleOnly,
-        )
-        .unwrap();
-        let v1 = sols.single.v1;
-        let r2_prop = kepler_propagate(r1, v1, tof, mu);
-        let err = vec_sub_norm(r2_prop, r2);
-        assert!(err < 1e-6, "kepler-roundtrip err = {err} km");
-    }
-
-    #[test]
-    fn errors_on_non_positive_tof() {
-        let r1 = [7000.0, 0.0, 0.0];
-        let r2 = [0.0, 7000.0, 0.0];
-        let err = lambert(
-            r1,
-            r2,
-            0.0,
-            MU_EARTH,
-            TransferWay::Short,
-            RevolutionBudget::SingleOnly,
-        )
-        .unwrap_err();
-        assert!(matches!(err, LambertError::NonPositiveTimeOfFlight { tof } if tof == 0.0));
-    }
-
-    #[test]
-    fn errors_on_zero_position_vector() {
-        let r1 = [0.0, 0.0, 0.0];
-        let r2 = [0.0, 7000.0, 0.0];
-        let err = lambert(
-            r1,
-            r2,
-            1000.0,
-            MU_EARTH,
-            TransferWay::Short,
-            RevolutionBudget::SingleOnly,
-        )
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            LambertError::DegeneratePositionVector {
-                position: Position::R1,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn errors_on_colinear_geometry() {
-        let r1 = [7000.0, 0.0, 0.0];
-        let r2 = [14_000.0, 0.0, 0.0];
-        let err = lambert(
-            r1,
-            r2,
-            1000.0,
-            MU_EARTH,
-            TransferWay::Short,
-            RevolutionBudget::SingleOnly,
-        )
-        .unwrap_err();
-        assert!(matches!(err, LambertError::CollinearGeometry { .. }));
-    }
-
-    #[test]
-    fn errors_on_transfer_angle_exactly_zero() {
-        // r1 ∥ r2, same direction — sin(θ) = 0 exactly, contract is
-        // |sin_angle| < COLINEARITY_TOL.
-        let r1 = [7000.0, 0.0, 0.0];
-        let r2 = [21_000.0, 0.0, 0.0];
-        let err = lambert(
-            r1,
-            r2,
-            1000.0,
-            MU_EARTH,
-            TransferWay::Short,
-            RevolutionBudget::SingleOnly,
-        )
-        .unwrap_err();
-        assert!(
-            matches!(
-                err,
-                LambertError::CollinearGeometry { sin_angle }
-                    if sin_angle.abs() < constants::COLINEARITY_TOL
-            ),
-            "expected CollinearGeometry near 0, got {err:?}",
-        );
-    }
-
-    #[test]
-    fn errors_on_transfer_angle_exactly_pi() {
-        // r1 anti-parallel to r2 — sin(θ) = 0 exactly, θ = π. Contract is
-        // |sin_angle| < COLINEARITY_TOL.
-        let r1 = [7000.0, 0.0, 0.0];
-        let r2 = [-7000.0, 0.0, 0.0];
-        let err = lambert(
-            r1,
-            r2,
-            1000.0,
-            MU_EARTH,
-            TransferWay::Short,
-            RevolutionBudget::SingleOnly,
-        )
-        .unwrap_err();
-        assert!(
-            matches!(
-                err,
-                LambertError::CollinearGeometry { sin_angle }
-                    if sin_angle.abs() < constants::COLINEARITY_TOL
-            ),
-            "expected CollinearGeometry near π, got {err:?}",
-        );
-    }
-
-    #[test]
-    fn errors_on_non_positive_mu() {
-        let r1 = [7000.0, 0.0, 0.0];
-        let r2 = [0.0, 7000.0, 0.0];
-        let err = lambert(
-            r1,
-            r2,
-            1000.0,
-            0.0,
-            TransferWay::Short,
-            RevolutionBudget::SingleOnly,
-        )
-        .unwrap_err();
-        assert!(matches!(err, LambertError::NonPositiveMu { mu } if mu == 0.0));
-    }
-
-    #[test]
-    fn errors_on_non_finite_inputs() {
-        let r1 = [7000.0, 0.0, 0.0];
-        let r2 = [0.0, 7000.0, 0.0];
-
-        let err = lambert(
-            r1,
-            r2,
-            f64::NAN,
-            MU_EARTH,
-            TransferWay::Short,
-            RevolutionBudget::SingleOnly,
-        )
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            LambertError::NonFiniteInput {
-                parameter: NonFiniteParameter::Tof,
-                ..
-            }
-        ));
-
-        let err = lambert(
-            [7000.0, f64::INFINITY, 0.0],
-            r2,
-            1000.0,
-            MU_EARTH,
-            TransferWay::Short,
-            RevolutionBudget::SingleOnly,
-        )
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            LambertError::NonFiniteInput {
-                parameter: NonFiniteParameter::R1Y,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn battin_regime_near_parabolic() {
-        // GTO-like 90° transfer with TOF tuned so the converged x lands inside
-        // the |x − 1| ≤ BATTIN_THRESHOLD (= 0.01) band, exercising the
-        // hypergeometric series formulation in tof::x_to_tof_battin (Eq. 20).
-        let mu = MU_EARTH;
-        let r1 = [7000.0, 0.0, 0.0];
-        let r2 = [0.0, 42_000.0, 0.0];
-        let tof = 7200.0;
-        let (sols, diag) = solve_with_diagnostics(
-            r1,
-            r2,
-            tof,
-            mu,
-            TransferWay::Short,
-            RevolutionBudget::SingleOnly,
-        )
-        .unwrap();
-        assert!(
-            (diag.single.lancaster_blanchard_x - 1.0).abs() < crate::constants::BATTIN_THRESHOLD,
-            "x = {} not in Battin band [1 - {tol}, 1 + {tol}]",
-            diag.single.lancaster_blanchard_x,
-            tol = crate::constants::BATTIN_THRESHOLD,
-        );
-        let r2_prop = kepler_propagate(r1, sols.single.v1, tof, mu);
-        let err = vec_sub_norm(r2_prop, r2);
-        assert!(err < 1e-3, "Battin round-trip err = {err} km");
-    }
-
-    #[test]
-    fn hyperbolic_transfer() {
-        // Fast LEO → 200 000 km transfer; required v1 exceeds Earth escape,
-        // landing in the hyperbolic branch (x > 1, positive specific energy).
-        let mu = MU_EARTH;
-        let r1 = [7000.0, 0.0, 0.0];
-        let r2 = [0.0, 200_000.0, 0.0];
-        let tof = 30_000.0;
-        let (sols, diag) = solve_with_diagnostics(
-            r1,
-            r2,
-            tof,
-            mu,
-            TransferWay::Short,
-            RevolutionBudget::SingleOnly,
-        )
-        .unwrap();
-        assert!(
-            diag.single.lancaster_blanchard_x > 1.0,
-            "expected hyperbolic (x > 1), got x = {}",
-            diag.single.lancaster_blanchard_x
-        );
-        let v1 = DVec3::from_array(sols.single.v1);
-        let energy = 0.5 * v1.dot(v1) - mu / DVec3::from_array(r1).length();
-        assert!(
-            energy > 0.0,
-            "expected positive specific energy, got {energy}"
-        );
-        let r2_prop = kepler_propagate(r1, sols.single.v1, tof, mu);
-        let err = vec_sub_norm(r2_prop, r2);
-        assert!(err < 1e-3, "hyperbolic round-trip err = {err} km");
-    }
-
-    #[test]
-    fn multi_rev_branches_distinct() {
-        let mu = MU_EARTH;
-        let r1 = [8000.0, 0.0, 0.0];
-        let r2 = [5600.0, 5600.0, 0.0];
-        let period = 2.0 * PI * (8000.0_f64.powi(3) / mu).sqrt();
-        let tof = 5.0 * period;
-        let (sols, diag) = solve_with_diagnostics(
-            r1,
-            r2,
-            tof,
-            mu,
-            TransferWay::Short,
-            RevolutionBudget::up_to(3),
-        )
-        .unwrap();
-
-        assert!(!sols.multi.is_empty(), "no multi-rev pairs found");
-        assert_eq!(sols.multi.len(), diag.multi.len());
-
-        for (pair, diag_pair) in sols.multi.iter().zip(diag.multi.iter()) {
-            assert_eq!(pair.n_revs, diag_pair.n_revs);
-            assert!(
-                diag_pair.long_period.lancaster_blanchard_x
-                    < diag_pair.short_period.lancaster_blanchard_x,
-                "M = {}: long-period x ({}) >= short-period x ({})",
-                pair.n_revs,
-                diag_pair.long_period.lancaster_blanchard_x,
-                diag_pair.short_period.lancaster_blanchard_x,
-            );
-            for branch in [pair.long_period, pair.short_period] {
-                let r2_prop = kepler_propagate(r1, branch.v1, tof, mu);
-                let err = vec_sub_norm(r2_prop, r2);
-                assert!(err < 1e-3, "M = {} branch round-trip err = {err} km", pair.n_revs);
-            }
-        }
-    }
-
-    #[test]
-    fn solution_ordering_contract() {
-        let mu = MU_EARTH;
-        let r1 = [8000.0, 0.0, 0.0];
-        let r2 = [5600.0, 5600.0, 0.0];
-        let period = 2.0 * PI * (8000.0_f64.powi(3) / mu).sqrt();
-        let tof = 5.0 * period;
-        let sols = lambert(
-            r1,
-            r2,
-            tof,
-            mu,
-            TransferWay::Short,
-            RevolutionBudget::up_to(3),
-        )
-        .unwrap();
-
-        let mut prev_m = 0_u32;
-        for pair in &sols.multi {
-            assert!(pair.n_revs > prev_m, "M strictly ascending across pairs");
-            prev_m = pair.n_revs;
-        }
-    }
-
-    #[cfg(feature = "serde")]
-    #[test]
-    fn serde_json_round_trip_preserves_solutions_and_errors() {
-        // Solutions round-trip.
-        let mu = MU_EARTH;
-        let r1 = [8000.0, 0.0, 0.0];
-        let r2 = [5600.0, 5600.0, 0.0];
-        let period = 2.0 * PI * (8000.0_f64.powi(3) / mu).sqrt();
-        let sols = lambert(
-            r1,
-            r2,
-            5.0 * period,
-            mu,
-            TransferWay::Short,
-            RevolutionBudget::up_to(2),
-        )
-        .unwrap();
-        let json = serde_json::to_string(&sols).unwrap();
-        let back: LambertSolutions = serde_json::from_str(&json).unwrap();
-        assert_eq!(sols, back);
-        assert!(!sols.multi.is_empty(), "test should exercise multi-rev branches");
-
-        // Error round-trip — discriminated union via the default external tag.
-        let err = LambertError::CollinearGeometry { sin_angle: 1e-20 };
-        let err_json = serde_json::to_string(&err).unwrap();
-        assert!(err_json.contains("CollinearGeometry"));
-        let err_back: LambertError = serde_json::from_str(&err_json).unwrap();
-        assert_eq!(err, err_back);
-    }
-
-    #[test]
-    fn interop_with_nalgebra_and_glam_round_trips() {
-        let mu = MU_EARTH;
-        let r1_na = nalgebra::Vector3::new(7000.0, 0.0, 0.0);
-        let r2_glam = glam::DVec3::new(0.0, 7000.0, 0.0);
-        let r1: [f64; 3] = r1_na.into();
-        let r2: [f64; 3] = r2_glam.to_array();
-        let tof = PI / 2.0 * (7000.0_f64.powi(3) / mu).sqrt();
-        let sols = lambert(
-            r1,
-            r2,
-            tof,
-            mu,
-            TransferWay::Short,
-            RevolutionBudget::SingleOnly,
-        )
-        .unwrap();
-        let v1_back_na: nalgebra::Vector3<f64> = sols.single.v1.into();
-        let v2_back_glam = glam::DVec3::from_array(sols.single.v2);
-        assert!(v1_back_na.iter().all(|c| c.is_finite()));
-        assert!(v2_back_glam.to_array().iter().all(|c| c.is_finite()));
-    }
-
-    #[test]
-    fn both_ways_returns_independent_halves() {
-        let mu = MU_EARTH;
-        let r: f64 = 7000.0;
-        let r1 = [r, 0.0, 0.0];
-        let r2 = [0.0, r, 0.0];
-        let period = 2.0 * PI * (r.powi(3) / mu).sqrt();
-        let tof = period / 4.0;
-
-        let both = lambert_both_ways(r1, r2, tof, mu, RevolutionBudget::SingleOnly).unwrap();
-        let short = lambert(
-            r1,
-            r2,
-            tof,
-            mu,
-            TransferWay::Short,
-            RevolutionBudget::SingleOnly,
-        )
-        .unwrap();
-        let long = lambert(
-            r1,
-            r2,
-            3.0 * period / 4.0,
-            mu,
-            TransferWay::Long,
-            RevolutionBudget::SingleOnly,
-        )
-        .unwrap();
-
-        assert_eq!(both.short, short);
-        assert!(both.long.single.v1.iter().all(|c| c.is_finite()));
-        let v_circ = (mu / r).sqrt();
-        assert!(vec_sub_norm(long.single.v1, [0.0, -v_circ, 0.0]) < 1e-9);
-    }
-
-    #[test]
-    fn kepler_roundtrip_random_single_rev() {
-        use rand::{Rng, SeedableRng};
-        use rand_chacha::ChaCha20Rng;
-        use rand_distr::Uniform;
-
-        let mu = MU_EARTH;
-        let mut rng = ChaCha20Rng::seed_from_u64(0xC0FF_EE42);
-        let radius = Uniform::new(3500.0, 28_000.0);
-        let tof_dist = Uniform::new(100.0, 50_000.0);
-
-        let mut max_rel_err = 0.0_f64;
-        let mut good_count = 0_u32;
-        let mut lambert_ok = 0_u32;
-        for _ in 0..1000 {
-            let (r1_mag, r2_mag) = (rng.sample(radius), rng.sample(radius));
-            let r1 = (DVec3::from_array(rand_unit_vec(&mut rng)) * r1_mag).to_array();
-            let r2 = (DVec3::from_array(rand_unit_vec(&mut rng)) * r2_mag).to_array();
-            let tof = rng.sample(tof_dist);
-            let way = if rng.gen_bool(0.5) {
-                TransferWay::Long
-            } else {
-                TransferWay::Short
-            };
-            let Ok(sols) = lambert(r1, r2, tof, mu, way, RevolutionBudget::SingleOnly) else {
-                continue;
-            };
-            lambert_ok += 1;
-            let r2_prop = kepler_propagate(r1, sols.single.v1, tof, mu);
-            let rel = vec_sub_norm(r2_prop, r2) / DVec3::from_array(r2).length();
-            if rel.is_finite() {
-                max_rel_err = max_rel_err.max(rel);
-                good_count += 1;
-            }
-        }
-        assert!(lambert_ok > 950, "too many Lambert failures: {lambert_ok}/1000");
-        assert!(good_count > 500, "too few converged round-trips: {good_count}/{lambert_ok}");
-        assert!(max_rel_err < 1e-6, "max relative round-trip err = {max_rel_err:.3e} over {good_count} trials");
-    }
-
-    #[test]
-    fn kepler_roundtrip_random_multi_rev() {
-        use rand::{Rng, SeedableRng};
-        use rand_chacha::ChaCha20Rng;
-        use rand_distr::Uniform;
-
-        let mu = MU_EARTH;
-        let mut rng = ChaCha20Rng::seed_from_u64(0xBEEF_DEAD);
-        let radius = Uniform::new(5600.0, 10_500.0);
-        let tof_dist = Uniform::new(10_000.0, 250_000.0);
-
-        let mut max_rel_err = 0.0_f64;
-        let mut branches = 0_u32;
-        let mut good_count = 0_u32;
-        for _ in 0..500 {
-            let (r1_mag, r2_mag) = (rng.sample(radius), rng.sample(radius));
-            let r1 = (DVec3::from_array(rand_unit_vec(&mut rng)) * r1_mag).to_array();
-            let r2 = (DVec3::from_array(rand_unit_vec(&mut rng)) * r2_mag).to_array();
-            let tof = rng.sample(tof_dist);
-            let Ok(sols) = lambert(r1, r2, tof, mu, TransferWay::Short, RevolutionBudget::up_to(3)) else {
-                continue;
-            };
-            let mut iter_branch = |s: LambertSolution| {
-                let r2_prop = kepler_propagate(r1, s.v1, tof, mu);
-                let rel = vec_sub_norm(r2_prop, r2) / DVec3::from_array(r2).length();
-                if rel.is_finite() {
-                    max_rel_err = max_rel_err.max(rel);
-                    good_count += 1;
-                }
-                branches += 1;
-            };
-            iter_branch(sols.single);
-            for pair in &sols.multi {
-                iter_branch(pair.long_period);
-                iter_branch(pair.short_period);
-            }
-        }
-        assert!(branches > 500, "expected branches > 500, got {branches}");
-        assert!(good_count > 300, "too few converged round-trips: {good_count}/{branches}");
-        assert!(max_rel_err < 1e-5, "max relative round-trip err = {max_rel_err:.3e} over {good_count} branches");
+        diagnostics: LambertDiagnostics {
+            single: single_diagnostics,
+            multi: multi_diagnostics,
+        },
     }
 }

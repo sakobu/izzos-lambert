@@ -7,8 +7,97 @@ it reaches `1.0`.
 
 ## [Unreleased]
 
-Targeting a `1.0.0` release once the API and feature surface have settled
-through external review.
+(no changes since `1.0.0`)
+
+## [1.0.0] — 2026-04-30
+
+The first stable release. Workspace shares `version = "1.0.0"` across all
+three crates; subsequent releases bump them together.
+
+### Public API consolidated to two entry points (breaking)
+
+The core crate's six entry points collapse to two:
+
+- **`lambert(&LambertInput) -> Result<LambertSolutions, LambertError>`** —
+  canonical single solve. Takes a `&LambertInput` instead of six
+  positional arguments.
+- **`lambert_par(&[LambertInput])`** (`rayon` feature) — parallel batch
+  solve, returns an `IndexedParallelIterator` over per-input results.
+
+Removed:
+
+- `solve_with_diagnostics(...)` — diagnostics now live inside every
+  `LambertSolutions` (see below), so the dichotomy is gone.
+- `lambert_both_ways(...)` — saved no work (geometry was recomputed
+  internally for short vs. long); call `lambert` twice with the two
+  `TransferWay` values.
+- `lambert_iter(&[LambertInput])` — was a one-line `.iter().map(...)`.
+- `LambertInput::solve()` — the free function `lambert(&input)` is the
+  single canonical entry point.
+- `BothWaysSolutions` (the return type of `lambert_both_ways`).
+
+Renamed:
+
+- `lambert_par_iter` → `lambert_par`.
+
+### Diagnostics live inside `LambertSolutions` (breaking)
+
+Every `lambert(...)` call returns `LambertSolutions { single, multi,
+diagnostics }`. The new `diagnostics` field carries the per-branch
+[`SolverDiagnostics`] (Householder iteration count) for the `single`
+branch and every multi-rev pair.
+
+`SolverDiagnostics::lancaster_blanchard_x` was removed — it exposed a
+kernel-internal variable that carried no consumer signal (a converged
+`Ok(...)` already implies tolerance was met, and `LambertError::NoConvergence`
+already carries the failure information).
+
+### Kernel internals hidden (breaking)
+
+- `pub mod constants` is now private. The Householder / Halley
+  tolerances and iteration caps are not part of the public API contract.
+- `MAX_MULTI_REV_PAIRS` (the only externally relevant constant — it
+  bounds the public return type) stays at the crate root.
+
+### `MultiRevSet` / `MultiRevDiagnostics` newtypes (breaking)
+
+`LambertSolutions::multi` and `LambertDiagnostics::multi` are now newtypes
+wrapping the underlying `ArrayVec`. Consumers see only
+`Deref<Target = [MultiRevPair]>` (or `[MultiRevPairDiagnostics]`) and
+`IntoIterator`. The `arrayvec` crate no longer leaks into the public API.
+
+JSON serialization (under the `serde` feature) uses `#[serde(transparent)]`
+so the on-the-wire shape stays a flat array.
+
+### Tests reorganized
+
+`#[cfg(test)] mod tests` moved out of `lib.rs` into per-scenario
+submodules under `src/tests/`: `single_rev`, `multi_rev`, `errors`,
+`regimes`, `interop`, `kepler_roundtrip`. Test bodies are unchanged
+modulo the API consolidation above.
+
+### WASM adapter (`lambert_izzo_wasm` v1.0.0, breaking)
+
+- `LambertSolutionOutput.diagnostics` field removed.
+- `LambertResponse.diagnostics: LambertDiagnosticsOutput` added (mirrors
+  the core's top-level `diagnostics`).
+- `SolverDiagnosticsOutput.x` field removed.
+- New `solveLambertBatch(requests)` that returns `Vec<BatchResult>` —
+  per-input tagged `{ kind: "ok", response } | { kind: "err", error }`.
+- New `MultiRevPairDiagnosticsOutput` and `LambertDiagnosticsOutput`
+  mirror types.
+- `LambertErrorOutput::Unknown { message }` retained as the forward-compat
+  fallback (the core's `LambertError` stays `#[non_exhaustive]`).
+- Real `README.md` and a single-page browser demo at `examples/web/`.
+
+### Workspace versioning
+
+- `[workspace.package]` block declares `version = "1.0.0"`; all three
+  member crates use `version.workspace = true`.
+- `lambert_izzo_test_support` continues as `publish = false`
+  (workspace-internal).
+
+## [0.5.0] — 2026-04-26 (pre-1.0)
 
 ### Removed (breaking)
 
@@ -31,56 +120,36 @@ through external review.
   - `rand_unit_vec(rng)` — rejection-sampling unit-vector helper
   - `kepler::propagate(r, v, dt, mu)` — universal-variable propagator
 - **Doc-rubric coverage** on `solve_with_diagnostics`, `lambert_both_ways`,
-  and the WASM wrappers (`solve_lambert`, `solve_lambert_request`).
-  Each now has explicit `# Invariants` and `# Validity` sections that
-  defer to `lambert`'s rubric.
+  and the WASM wrappers. Each now has explicit `# Invariants` and
+  `# Validity` sections that defer to `lambert`'s rubric.
 
 ### Changed (internal)
 
 - **`vec3.rs` trimmed** from 9 functions to 4 (`dot`, `cross`, `norm`,
   `scale`). `add`, `sub`, `normalize`, `try_normalize`, `norm_squared`
-  are inlined at their few remaining call sites in `geometry.rs` and
-  the velocity reconstructor in `lib.rs`. The lib's inline tests now
-  use `glam::DVec3` for symmetry with the examples and benches.
+  are inlined at their few remaining call sites.
 - **Hot-path: hoisted `y` out of the Householder / Halley iteration.**
-  `tof::x_to_tof_with_y` and `tof::tof_derivatives_with_y` accept
-  precomputed `y = sqrt(1 − λ²(1 − x²))`; the iteration loops compute
-  it once per step and thread it into both calls, saving one
-  `sqrt + arithmetic` per iteration on the dominant hot path.
-- **Redundant `(1 − x²)` recomputation eliminated** in
-  `tof::compute_psi` — now takes the precomputed value from its sole
-  caller, `x_to_tof_lancaster`.
-- **Examples, benches, and integration tests** dropped their
-  hand-rolled vec helpers, local `MU_EARTH` constants (9 sites), and
-  local `rand_unit_vec` impls (5 sites). All pull from
-  `lambert_izzo_test_support` + `glam::DVec3`.
+- **Redundant `(1 − x²)` recomputation eliminated** in `tof::compute_psi`.
+- **Examples, benches, and integration tests** dropped their hand-rolled
+  vec helpers, local `MU_EARTH` constants (9 sites), and local
+  `rand_unit_vec` impls (5 sites). All pull from `lambert_izzo_test_support`
+  + `glam::DVec3`.
 - **`glam`** promoted from `lambert_izzo`'s inline dev-dep to
   `[workspace.dependencies]`.
 
-Behavior is preserved exactly — `examples/stress.rs` shows identical
-solver-iteration histograms and conservation residuals at f64
-round-off (~1e-12 single-rev, ~1e-14 multi-rev).
-
-## [0.5.0] — 2026-04-26
-
-### Changed (breaking)
+### Public-API renames (breaking, pre-1.0)
 
 - **Drop unit suffixes from public API.** Parameter and field names are
-  now plain (`r1`, `r2`, `tof`, `mu`, `v1`, `v2`, `norm`) — the unit
-  convention (km, s, km/s, km³/s²) lives in the docs, matching the
-  prevailing Rust idiom. The crate is now dimensionally homogeneous in
-  any consistent unit system; the SI choice is just a documentation
-  default.
+  now plain (`r1`, `r2`, `tof`, `mu`, `v1`, `v2`, `norm`).
 - **`LambertError::DegeneratePositionVector`** swaps its `which: u8`
   field for `position: Position`, where `Position` is a typed
-  `R1 | R2` enum. Lets callers pattern-match on the variant instead of
-  comparing magic numbers.
-- **`NonFiniteParameter`** variants drop the `Km` suffix (`R1KmX` →
-  `R1X`, etc.). `as_str()` returns `"r1.x"` etc.
+  `R1 | R2` enum.
+- **`NonFiniteParameter`** variants drop the `Km` suffix (`R1KmX` → `R1X`,
+  etc.).
 - **`MIN_POSITION_NORM_KM`** renamed to `MIN_POSITION_NORM`.
 - **`LambertError::NonPositiveTimeOfFlight::tof_s`** field renamed to
-  `tof`; **`LambertError::NonPositiveMu::mu_km3_s2`** to `mu`;
-  **`LambertError::DegeneratePositionVector::norm_km`** to `norm`.
+  `tof`; **`NonPositiveMu::mu_km3_s2`** to `mu`;
+  **`DegeneratePositionVector::norm_km`** to `norm`.
 
 ### WASM adapter (`lambert_izzo_wasm` v0.4.0)
 
@@ -90,7 +159,7 @@ round-off (~1e-12 single-rev, ~1e-14 multi-rev).
   `tofS`, etc.
 - Adds a `PositionOutput` mirror enum for the core's new `Position`.
 
-## [0.4.0] — 2026-04-26
+## [0.4.0] — 2026-04-26 (pre-1.0)
 
 ### Added
 
@@ -130,7 +199,7 @@ lambert_izzo --no-default-features --lib`.
   of a plain string. JS callers can `switch` on `kind` without parsing
   error messages.
 
-## [0.3.0] — 2026-04-26
+## [0.3.0] — 2026-04-26 (pre-1.0)
 
 ### Changed (breaking)
 
@@ -157,14 +226,14 @@ LambertDiagnostics)` for callers that need iteration counts and the
 
 - Array-conversion shim deleted; the public surface was already arrays.
 
-## [0.2.0] — 2026-04-26
+## [0.2.0] — 2026-04-26 (pre-1.0)
 
 - Workspace restructure: `crates/lambert_izzo` (core) and
   `crates/lambert_izzo_wasm` (`wasm-bindgen` adapter).
 - Documentation polish on `pub fn lambert`; tightened `Cargo.toml`
   metadata for `crates.io` publication.
 
-## [0.1.0] — 2026-04-26
+## [0.1.0] — 2026-04-26 (pre-1.0)
 
 - Initial implementation of Izzo's revisited Lambert solver
   (single + multi-revolution, short + long way).
@@ -176,7 +245,8 @@ LambertDiagnostics)` for callers that need iteration counts and the
 - Strict lint baseline: `clippy::pedantic` + bans on `unwrap`/`expect`/
   `panic`/`unreachable` in lib code.
 
-[Unreleased]: https://github.com/sakobu/izzos_lambert/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/sakobu/izzos_lambert/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/sakobu/izzos_lambert/compare/v0.5.0...v1.0.0
 [0.5.0]: https://github.com/sakobu/izzos_lambert/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/sakobu/izzos_lambert/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/sakobu/izzos_lambert/compare/v0.2.0...v0.3.0
