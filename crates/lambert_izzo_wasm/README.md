@@ -12,11 +12,13 @@ The Rust core stays free of WASM concerns; this crate adds the
 npm install lambert-izzo
 ```
 
-Works with bundlers (Vite, webpack, Rollup), browser ES modules, and
-Node.js. The npm package is built with
-[`wasm-pack`](https://rustwasm.github.io/docs/wasm-pack/) targeting
-`bundler`; see [Building from source](#building-from-source) for the
-other targets.
+Works with bundlers (Vite, webpack, Rollup, esbuild) — the published npm
+package is built with
+[`wasm-pack`](https://rustwasm.github.io/docs/wasm-pack/)'s
+`--target bundler`. For direct browser ES-module imports without a
+bundler, or Node.js without the `--experimental-wasm-modules` flag,
+build from source with `--target web` or `--target nodejs` (see the
+target table under [Building from source](#building-from-source)).
 
 ## Usage
 
