@@ -17,6 +17,18 @@ pub mod bodies {
     pub const AU: f64 = 1.495_978_707e8;
 }
 
+/// `usize → u64` for `criterion::Throughput::Elements` callers.
+///
+/// Uses `u64::try_from` rather than `as` to comply with the workspace
+/// casting policy (no silent truncation). The conversion is lossless on
+/// every supported target (native 64-bit + `wasm32`); the `expect` only
+/// trips on hypothetical >64-bit targets that the workspace doesn't
+/// compile for.
+#[must_use]
+pub fn elements_u64(n: usize) -> u64 {
+    u64::try_from(n).expect("len fits in u64 on supported targets")
+}
+
 /// Generate a uniformly distributed unit vector by rejection sampling on
 /// the unit cube. Used to seed Lambert stress / bench inputs.
 pub fn rand_unit_vec<R: Rng + ?Sized>(rng: &mut R) -> [f64; 3] {
