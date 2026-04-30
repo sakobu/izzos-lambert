@@ -290,7 +290,10 @@ for the parallel batch row).
 | Workload                                  | Throughput     | Per call |
 | ----------------------------------------- | -------------- | -------- |
 | Single-rev (random Earth orbits)          | ~3.1 M calls/s | ~320 ns  |
-| Multi-rev `M=3` (Earth orbits)            | ~775 K calls/s | ~1.3 µs  |
+| Multi-rev `M=1` (Earth orbits)            | ~1.5 M calls/s | ~650 ns  |
+| Multi-rev `M=3` (Earth orbits)            | ~770 K calls/s | ~1.3 µs  |
+| Multi-rev `M=5` (Earth orbits)            | ~520 K calls/s | ~1.9 µs  |
+| Battin near-parabolic (177°, single-rev)  | ~4.2 M calls/s | ~240 ns  |
 | Sequential batch (loop over `lambert`)    | ~1.2 M calls/s | ~830 ns  |
 | Parallel batch via `lambert_par` (rayon)  | ~8.8 M calls/s | ~114 ns  |
 

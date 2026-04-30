@@ -6,6 +6,18 @@ the project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Tooling
+
+- CI: GitHub Actions workflow at `.github/workflows/ci.yml` covering
+  MSRV (1.85) build × four feature combos, full build/test/doctest
+  on stable × four feature combos, clippy, docs (with
+  `RUSTDOCFLAGS: -D warnings`), wasm32 build for `lambert_izzo` and
+  `lambert_izzo_wasm`, and the `stress` example.
+- Benches: `multi_rev` parametrized across `M ∈ {1, 3, 5}` via
+  Criterion's `bench_with_input`; new `multi_rev_battin` group exercising
+  the Battin near-parabolic regime (`|x − 1| < BATTIN_THRESHOLD`) via a
+  near-180° geometry with TOF jittered around the parabolic time-of-flight.
+
 ## [1.0.0] — 2026-04-30
 
 Initial public release. `lambert_izzo` is a `no_std`-friendly Rust

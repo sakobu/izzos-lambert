@@ -7,6 +7,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use lambert_izzo::{RevolutionBudget, lambert};
 use lambert_izzo_test_support::bodies::MU_EARTH;
+use lambert_izzo_test_support::elements_u64;
 use lambert_izzo_test_support::random_inputs::{Spec, WayStrategy, generate};
 use std::hint::black_box;
 
@@ -26,7 +27,7 @@ fn batch_sequential(c: &mut Criterion) {
     let inputs = generate(&spec());
 
     let mut group = c.benchmark_group("batch_sequential");
-    group.throughput(criterion::Throughput::Elements(inputs.len() as u64));
+    group.throughput(criterion::Throughput::Elements(elements_u64(inputs.len())));
     group.sample_size(20);
     group.bench_function("lambert_seq_x10000", |b| {
         b.iter(|| {
@@ -46,7 +47,7 @@ fn batch_parallel(c: &mut Criterion) {
     let inputs = generate(&spec());
 
     let mut group = c.benchmark_group("batch_parallel");
-    group.throughput(criterion::Throughput::Elements(inputs.len() as u64));
+    group.throughput(criterion::Throughput::Elements(elements_u64(inputs.len())));
     group.sample_size(20);
     group.bench_function("lambert_par_x10000", |b| {
         b.iter(|| {
