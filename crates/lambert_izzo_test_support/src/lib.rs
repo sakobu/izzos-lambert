@@ -32,6 +32,87 @@ pub fn rand_unit_vec<R: Rng + ?Sized>(rng: &mut R) -> [f64; 3] {
     }
 }
 
+/// Deterministic random batches of [`lambert_izzo::LambertInput`] for
+/// benches and stress runs.
+///
+/// Position vectors are uniformly distributed on the sphere (via
+/// [`rand_unit_vec`]) and scaled by an independent uniform magnitude per
+/// endpoint; `tof` is uniform on its range; `way` is configurable.
+pub mod random_inputs {
+    use lambert_izzo::{LambertInput, RevolutionBudget, TransferWay};
+    use rand::distributions::Uniform;
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha20Rng;
+
+    /// How to choose the transfer direction for each generated input.
+    #[derive(Debug, Clone, Copy)]
+    pub enum WayStrategy {
+        /// Force [`TransferWay::Short`] for every input.
+        Short,
+        /// Force [`TransferWay::Long`] for every input.
+        Long,
+        /// 50/50 random Short/Long, drawn independently per input.
+        Random,
+    }
+
+    /// Specification for a random `LambertInput` batch.
+    ///
+    /// Range tuples are `(min, max)` and follow `rand`'s `Uniform::new`
+    /// semantics — inclusive of the lower bound, exclusive of the upper.
+    #[derive(Debug, Clone, Copy)]
+    pub struct Spec {
+        /// How many inputs to produce.
+        pub n: usize,
+        /// RNG seed (deterministic batches across runs).
+        pub seed: u64,
+        /// `(min, max)` of the position-vector magnitude (km in SI).
+        pub radius_range: (f64, f64),
+        /// `(min, max)` of the time of flight (s in SI).
+        pub tof_range: (f64, f64),
+        /// Gravitational parameter (km³/s² in SI).
+        pub mu: f64,
+        /// How to pick the transfer way per input.
+        pub way: WayStrategy,
+        /// Revolution budget passed through to every input.
+        pub revolutions: RevolutionBudget,
+    }
+
+    /// Build a deterministic batch of random `LambertInput`s following `spec`.
+    #[must_use]
+    pub fn generate(spec: &Spec) -> Vec<LambertInput> {
+        let mut rng = ChaCha20Rng::seed_from_u64(spec.seed);
+        let radius = Uniform::new(spec.radius_range.0, spec.radius_range.1);
+        let tof = Uniform::new(spec.tof_range.0, spec.tof_range.1);
+        (0..spec.n)
+            .map(|_| {
+                let r1n = rng.sample(radius);
+                let r2n = rng.sample(radius);
+                let r1u = crate::rand_unit_vec(&mut rng);
+                let r2u = crate::rand_unit_vec(&mut rng);
+                let way = match spec.way {
+                    WayStrategy::Short => TransferWay::Short,
+                    WayStrategy::Long => TransferWay::Long,
+                    WayStrategy::Random => {
+                        if rng.gen_bool(0.5) {
+                            TransferWay::Long
+                        } else {
+                            TransferWay::Short
+                        }
+                    }
+                };
+                LambertInput {
+                    r1: [r1u[0] * r1n, r1u[1] * r1n, r1u[2] * r1n],
+                    r2: [r2u[0] * r2n, r2u[1] * r2n, r2u[2] * r2n],
+                    tof: rng.sample(tof),
+                    mu: spec.mu,
+                    way,
+                    revolutions: spec.revolutions,
+                }
+            })
+            .collect()
+    }
+}
+
 /// Reference Kepler propagator for Lambert round-trip validation.
 pub mod kepler {
     /// Newton-iteration cap on the universal Kepler equation. Well above the

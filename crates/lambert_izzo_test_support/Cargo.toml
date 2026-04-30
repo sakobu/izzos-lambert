@@ -3,9 +3,11 @@ name = "lambert_izzo_test_support"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "Workspace-internal dev fixtures for lambert_izzo (constants, RNG helpers, Kepler propagator)."
+description = "Workspace-internal dev fixtures for lambert_izzo (constants, RNG helpers, Kepler propagator, random LambertInput batches)."
 license.workspace = true
 publish = false
 
 [dependencies]
+lambert_izzo = { workspace = true }
 rand = "0.8"
+rand_chacha = "0.3"

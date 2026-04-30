@@ -403,7 +403,9 @@ dependencies = [
 name = "lambert_izzo_test_support"
 version = "0.1.0"
 dependencies = [
+ "lambert_izzo",
  "rand",
+ "rand_chacha",
 ]
 
 [[package]]
