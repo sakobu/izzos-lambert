@@ -10,7 +10,7 @@ use core::f64::consts::PI;
 #[allow(unused_imports)]
 use num_traits::Float as _;
 
-use crate::MAX_MULTI_REV_PAIRS;
+use crate::{BoundedRevs, MAX_MULTI_REV_PAIRS};
 use crate::constants::{
     HALLEY_MAX_ITERS, HALLEY_TOL, HOUSEHOLDER_MAX_ITERS, HOUSEHOLDER_TOL_MULTI,
     HOUSEHOLDER_TOL_SINGLE,
@@ -33,8 +33,8 @@ pub(crate) struct Root {
 /// One multi-rev pair: long-period and short-period roots for a given `M`.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RootPair {
-    /// Branch revolution count (`>= 1`).
-    pub n_revs: u32,
+    /// Branch revolution count.
+    pub n_revs: BoundedRevs,
     /// Long-period root (smaller `x`).
     pub long_period: Root,
     /// Short-period root (larger `x`).
@@ -93,7 +93,8 @@ pub(crate) fn find_xy(
     // `find_xy`. The ArrayVec capacity is type-enforced by `BoundedRevs`
     // (≤ MAX_MULTI_REV_PAIRS), so no runtime clamp is required.
     for m in revolutions.iter_revs() {
-        let m_pi = f64::from(m) * PI;
+        let m_u32 = m.get();
+        let m_pi = f64::from(m_u32) * PI;
 
         // Quick reject: T_min(M) ≥ M·π always, so big_t < M·π ⇒ infeasible.
         if big_t < m_pi {
@@ -104,15 +105,15 @@ pub(crate) fn find_xy(
         // Confirm numerical T_min(M) ≤ big_t; otherwise drop the branch
         // (and all higher M, which have higher T_min).
         if big_t < t00 + m_pi {
-            let (_x_min, t_min) = halley_t_min(lambda, m);
+            let (_x_min, t_min) = halley_t_min(lambda, m_u32);
             if t_min > big_t {
                 break;
             }
         }
 
-        let (x0l, x0r) = initial_guess_multi_rev(big_t, m);
-        let (xl, il) = householder(x0l, big_t, lambda, m)?;
-        let (xr, ir) = householder(x0r, big_t, lambda, m)?;
+        let (x0l, x0r) = initial_guess_multi_rev(big_t, m_u32);
+        let (xl, il) = householder(x0l, big_t, lambda, m_u32)?;
+        let (xr, ir) = householder(x0r, big_t, lambda, m_u32)?;
         // Capacity is type-enforced via `BoundedRevs::MAX`; `try_push` here
         // is no-panic discipline, not a real failure path.
         if multi

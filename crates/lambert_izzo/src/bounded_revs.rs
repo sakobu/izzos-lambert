@@ -17,7 +17,7 @@ use core::num::NonZeroU32;
 /// `1..=BoundedRevs::MAX` invariant. Use [`crate::RevolutionBudget::up_to`]
 /// (total) or [`crate::RevolutionBudget::try_up_to`] (fallible) to wrap the
 /// validated value into the budget enum consumed by [`crate::lambert`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BoundedRevs(NonZeroU32);
 
 impl BoundedRevs {
@@ -48,6 +48,22 @@ impl BoundedRevs {
     #[must_use]
     pub const fn get(self) -> u32 {
         self.0.get()
+    }
+
+    /// Iterator over `1..=self` as validated [`BoundedRevs`] values.
+    ///
+    /// Each yielded value inherits the `1..=BoundedRevs::MAX` invariant from
+    /// `self`, so the bounds check inside [`BoundedRevs::try_new`] would be
+    /// redundant — values are constructed via the private tuple constructor
+    /// instead. Used by [`crate::RevolutionBudget::iter_revs`].
+    pub(crate) fn range_inclusive_one_to_self(self) -> impl Iterator<Item = Self> {
+        (1..=self.0.get()).filter_map(|n| NonZeroU32::new(n).map(Self))
+    }
+}
+
+impl core::fmt::Display for BoundedRevs {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.fmt(f)
     }
 }
 
@@ -137,6 +153,12 @@ mod tests {
         // Compiles only because `try_new` is `const fn` — regression guard.
         const REVS: Result<BoundedRevs, RevsOutOfRange> = BoundedRevs::try_new(5);
         assert_eq!(REVS.unwrap().get(), 5);
+    }
+
+    #[test]
+    fn display_matches_inner_value() {
+        let revs = BoundedRevs::try_new(5).unwrap();
+        assert_eq!(format!("{revs}"), "5");
     }
 
     #[cfg(feature = "serde")]

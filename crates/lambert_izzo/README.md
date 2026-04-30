@@ -140,7 +140,7 @@ pub struct LambertSolutions {
 }
 
 pub struct MultiRevPair {
-    pub n_revs: u32,
+    pub n_revs: BoundedRevs,            // 1..=BoundedRevs::MAX, type-enforced
     pub long_period: LambertSolution,
     pub short_period: LambertSolution,
 }
@@ -229,16 +229,20 @@ assert!(bad.is_err());
 ```
 
 The cap is `BoundedRevs::MAX = 32`, type-equal to the
-`MAX_MULTI_REV_PAIRS` capacity of the bounded return collection.
+`MAX_MULTI_REV_PAIRS` capacity of the bounded return collection. The
+validation round-trips all the way through: `MultiRevPair::n_revs` and
+`MultiRevPairDiagnostics::n_revs` are themselves `BoundedRevs`, so any
+revolution count appearing in a returned solution is statically
+guaranteed to lie in `1..=BoundedRevs::MAX`. Call `.get()` to extract
+the raw `u32` when needed.
 
 When the solver silently drops higher-`M` branches (their `T_min(M)`
 exceeds the requested `tof`), call `solutions.max_feasible_revs()` to get
 the highest `M` that actually produced a `(long_period, short_period)`
-pair. It returns `Some(b)` with `b.get()` equal to
-`solutions.multi.last().unwrap().n_revs`, and `None` for
-`RevolutionBudget::SingleOnly` or when no multi-rev branch was feasible
-at all. Use it to detect the silent-skip boundary without having to
-compare requested vs returned counts by hand.
+pair. It returns `Some(b)` equal to `solutions.multi.last().unwrap().n_revs`,
+and `None` for `RevolutionBudget::SingleOnly` or when no multi-rev branch
+was feasible at all. Use it to detect the silent-skip boundary without
+having to compare requested vs returned counts by hand.
 
 ### Math-library interop
 

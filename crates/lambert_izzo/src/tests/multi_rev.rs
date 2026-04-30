@@ -73,10 +73,11 @@ fn solution_ordering_contract() {
     let input = phasing_input();
     let sols = lambert(&input).unwrap();
 
-    let mut prev_m = 0_u32;
-    for pair in &sols.multi {
-        assert!(pair.n_revs > prev_m, "M strictly ascending across pairs");
-        prev_m = pair.n_revs;
+    for window in sols.multi.windows(2) {
+        assert!(
+            window[1].n_revs > window[0].n_revs,
+            "M strictly ascending across pairs",
+        );
     }
 }
 
@@ -191,10 +192,7 @@ fn max_feasible_revs_none_when_no_multi_branch_feasible() {
 fn max_feasible_revs_some_returns_bounded_revs() {
     let sols = lambert(&phasing_input()).unwrap();
     let last = sols.multi.last().unwrap().n_revs;
-    assert_eq!(
-        sols.max_feasible_revs().map(BoundedRevs::get),
-        Some(last),
-    );
+    assert_eq!(sols.max_feasible_revs(), Some(last));
 }
 
 #[test]
@@ -212,13 +210,13 @@ fn revolution_budget_max_some_for_up_to() {
 
 #[test]
 fn revolution_budget_iter_revs_empty_for_single_only() {
-    let revs: Vec<u32> = RevolutionBudget::SingleOnly.iter_revs().collect();
+    let revs: Vec<BoundedRevs> = RevolutionBudget::SingleOnly.iter_revs().collect();
     assert!(revs.is_empty());
 }
 
 #[test]
 fn revolution_budget_iter_revs_yields_one_through_n() {
     let budget = RevolutionBudget::try_up_to(3).unwrap();
-    let revs: Vec<u32> = budget.iter_revs().collect();
+    let revs: Vec<u32> = budget.iter_revs().map(BoundedRevs::get).collect();
     assert_eq!(revs, vec![1, 2, 3]);
 }

@@ -195,12 +195,19 @@ impl RevolutionBudget {
 
     /// Iterator over the multi-rev branch counts this budget will search.
     ///
-    /// Yields `1..=b.get()` for [`RevolutionBudget::UpTo`] and is empty for
-    /// [`RevolutionBudget::SingleOnly`]. This is the canonical way to drive
-    /// the multi-rev loop in the kernel — it removes the need for callers
-    /// to materialize a `0` upper-bound sentinel.
-    pub fn iter_revs(self) -> impl Iterator<Item = u32> {
-        self.max().into_iter().flat_map(|b| 1..=b.get())
+    /// Yields validated [`BoundedRevs`] values `1..=b` for
+    /// [`RevolutionBudget::UpTo(b)`](RevolutionBudget::UpTo) and is empty
+    /// for [`RevolutionBudget::SingleOnly`]. This is the canonical way to
+    /// drive the multi-rev loop in the kernel — emitting `BoundedRevs`
+    /// rather than raw `u32` keeps the `1..=BoundedRevs::MAX` invariant
+    /// inside the type system all the way to the
+    /// [`MultiRevPair::n_revs`] / [`MultiRevPairDiagnostics::n_revs`]
+    /// fields on the returned [`LambertSolutions`]. Call `.get()` at any
+    /// site that needs the raw count for arithmetic.
+    pub fn iter_revs(self) -> impl Iterator<Item = BoundedRevs> {
+        self.max()
+            .into_iter()
+            .flat_map(BoundedRevs::range_inclusive_one_to_self)
     }
 }
 
@@ -248,8 +255,8 @@ pub struct LambertSolution {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MultiRevPair {
-    /// Branch revolution count (`>= 1`).
-    pub n_revs: u32,
+    /// Branch revolution count.
+    pub n_revs: BoundedRevs,
     /// Long-period trajectory.
     pub long_period: LambertSolution,
     /// Short-period trajectory.
@@ -286,15 +293,12 @@ impl LambertSolutions {
     ///
     /// Returns [`None`] for [`RevolutionBudget::SingleOnly`] or when no
     /// multi-rev branch was feasible at the requested TOF; otherwise
-    /// `Some(b)` where `b.get()` equals `self.multi.last().unwrap().n_revs`.
-    /// Pairs structurally with [`RevolutionBudget::max`] — both expose
-    /// "highest relevant `M`" through the same [`BoundedRevs`] type.
+    /// `Some(b)` equal to `self.multi.last().unwrap().n_revs`. Pairs
+    /// structurally with [`RevolutionBudget::max`] — both expose "highest
+    /// relevant `M`" through the same [`BoundedRevs`] type.
     #[must_use]
     pub fn max_feasible_revs(&self) -> Option<BoundedRevs> {
-        // n_revs is produced by the kernel iterating
-        // `revolutions.iter_revs()`, which is bounded by `BoundedRevs::MAX`
-        // at construction — `try_new` failing here would be a kernel bug.
-        BoundedRevs::try_new(self.multi.last()?.n_revs).ok()
+        self.multi.last().map(|p| p.n_revs)
     }
 }
 
@@ -310,8 +314,8 @@ pub struct SolverDiagnostics {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MultiRevPairDiagnostics {
-    /// Branch revolution count (`>= 1`).
-    pub n_revs: u32,
+    /// Branch revolution count.
+    pub n_revs: BoundedRevs,
     /// Long-period branch diagnostics.
     pub long_period: SolverDiagnostics,
     /// Short-period branch diagnostics.

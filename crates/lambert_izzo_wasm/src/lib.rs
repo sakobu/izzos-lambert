@@ -450,7 +450,7 @@ fn into_response(solutions: &LambertSolutions) -> LambertResponse {
         .zip(solutions.diagnostics.multi.iter())
     {
         multi.push(MultiRevPairOutput {
-            n_revs: pair.n_revs,
+            n_revs: pair.n_revs.get(),
             long_period: LambertSolutionOutput {
                 v1: pair.long_period.v1,
                 v2: pair.long_period.v2,
@@ -461,7 +461,7 @@ fn into_response(solutions: &LambertSolutions) -> LambertResponse {
             },
         });
         multi_diagnostics.push(MultiRevPairDiagnosticsOutput {
-            n_revs: dpair.n_revs,
+            n_revs: dpair.n_revs.get(),
             long_period: SolverDiagnosticsOutput {
                 iters: dpair.long_period.iters,
             },

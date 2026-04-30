@@ -29,10 +29,22 @@ rather than enforced by silent runtime clamping.
   `u32`). `None` for `SingleOnly`, `Some(b)` for `UpTo(b)`. Removes the
   ambiguous `0` return and matches the type-honest direction of
   `BoundedRevs`.
-- **New `RevolutionBudget::iter_revs() -> impl Iterator<Item = u32>`** —
-  yields `1..=b.get()` for `UpTo(b)` and is empty for `SingleOnly`.
-  Canonical way to drive a multi-rev loop without re-materializing the
-  `0` upper-bound sentinel.
+- **New `RevolutionBudget::iter_revs() -> impl Iterator<Item = BoundedRevs>`** —
+  yields validated `BoundedRevs` values `1..=b` for `UpTo(b)` and is
+  empty for `SingleOnly`. Canonical way to drive a multi-rev loop
+  without re-materializing the `0` upper-bound sentinel; emitting
+  `BoundedRevs` rather than raw `u32` keeps the `1..=BoundedRevs::MAX`
+  invariant inside the type system all the way to the
+  `MultiRevPair::n_revs` field on the returned solution.
+- **`MultiRevPair::n_revs` and `MultiRevPairDiagnostics::n_revs` are now
+  `BoundedRevs`** (was `u32`); callers needing the raw count use
+  `.n_revs.get()`. Closes the last `u32`-shaped invariant on the
+  multi-rev public API. JS callers are unaffected — the WASM adapter
+  still surfaces `nRevs: number`.
+- **`BoundedRevs` gains `Display`, `PartialOrd`/`Ord`, and `Hash`
+  derives** — pure additions. Lets `println!("M={}", pair.n_revs)`,
+  ordering checks (`pair.n_revs > prev`), and use as a hash-map key
+  drop in without `.get()` round-trips.
 - **New `RevsOutOfRange` error type** — standalone, `thiserror::Error`,
   serde-compatible. Distinct from `LambertError` because it represents
   construction-time validation, not solver-runtime failure.
