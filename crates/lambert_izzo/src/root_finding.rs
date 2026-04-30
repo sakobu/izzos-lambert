@@ -92,8 +92,7 @@ pub(crate) fn find_xy(
     // minimum T(x=0, M) = t00 + M·π — at most one Halley call per call to
     // `find_xy`. The ArrayVec capacity is type-enforced by `BoundedRevs`
     // (≤ MAX_MULTI_REV_PAIRS), so no runtime clamp is required.
-    let m_max = revolutions.max();
-    for m in 1..=m_max {
+    for m in revolutions.iter_revs() {
         let m_pi = f64::from(m) * PI;
 
         // Quick reject: T_min(M) ≥ M·π always, so big_t < M·π ⇒ infeasible.

@@ -9,7 +9,7 @@ use lambert_izzo_test_support::kepler::propagate as kepler_propagate;
 use lambert_izzo_test_support::rand_unit_vec;
 
 use super::vec_sub_norm;
-use crate::{LambertInput, LambertSolution, RevolutionBudget, TransferWay, lambert};
+use crate::{BoundedRevs, LambertInput, LambertSolution, RevolutionBudget, TransferWay, lambert};
 
 /// Long-tof Earth-orbit phasing — admits multiple multi-rev branches.
 /// Shared across the three scenarios that exercise branching, ordering,
@@ -149,25 +149,25 @@ fn max_feasible_revs_reflects_silent_skip() {
 
     assert!(!sols.multi.is_empty(), "no multi-rev pairs returned");
     assert!(
-        sols.max_feasible_revs() < 10,
-        "expected silent-skip below requested cap; got max_feasible_revs = {}",
+        matches!(sols.max_feasible_revs(), Some(b) if b.get() < 10),
+        "expected silent-skip below requested cap; got max_feasible_revs = {:?}",
         sols.max_feasible_revs(),
     );
 }
 
 #[test]
-fn max_feasible_revs_zero_when_single_only() {
+fn max_feasible_revs_none_when_single_only() {
     // Same phasing geometry, but the budget rejects every multi-rev branch.
     let mut input = phasing_input();
     input.revolutions = RevolutionBudget::SingleOnly;
     let sols = lambert(&input).unwrap();
 
     assert!(sols.multi.is_empty());
-    assert_eq!(sols.max_feasible_revs(), 0);
+    assert_eq!(sols.max_feasible_revs(), None);
 }
 
 #[test]
-fn max_feasible_revs_zero_when_no_multi_branch_feasible() {
+fn max_feasible_revs_none_when_no_multi_branch_feasible() {
     // Quarter-circle Earth orbit — TOF is one quarter period, far below
     // T_min for every M ≥ 1, so no multi-rev branch is feasible even
     // though the budget asked for some.
@@ -184,5 +184,41 @@ fn max_feasible_revs_zero_when_no_multi_branch_feasible() {
     let sols = lambert(&input).unwrap();
 
     assert!(sols.multi.is_empty());
-    assert_eq!(sols.max_feasible_revs(), 0);
+    assert_eq!(sols.max_feasible_revs(), None);
+}
+
+#[test]
+fn max_feasible_revs_some_returns_bounded_revs() {
+    let sols = lambert(&phasing_input()).unwrap();
+    let last = sols.multi.last().unwrap().n_revs;
+    assert_eq!(
+        sols.max_feasible_revs().map(BoundedRevs::get),
+        Some(last),
+    );
+}
+
+#[test]
+fn revolution_budget_max_none_for_single_only() {
+    assert_eq!(RevolutionBudget::SingleOnly.max(), None);
+}
+
+#[test]
+fn revolution_budget_max_some_for_up_to() {
+    let budget = RevolutionBudget::try_up_to(5).unwrap();
+    let bounded = budget.max().unwrap();
+    assert_eq!(bounded.get(), 5);
+    assert_eq!(bounded, BoundedRevs::try_new(5).unwrap());
+}
+
+#[test]
+fn revolution_budget_iter_revs_empty_for_single_only() {
+    let revs: Vec<u32> = RevolutionBudget::SingleOnly.iter_revs().collect();
+    assert!(revs.is_empty());
+}
+
+#[test]
+fn revolution_budget_iter_revs_yields_one_through_n() {
+    let budget = RevolutionBudget::try_up_to(3).unwrap();
+    let revs: Vec<u32> = budget.iter_revs().collect();
+    assert_eq!(revs, vec![1, 2, 3]);
 }

@@ -179,13 +179,28 @@ impl RevolutionBudget {
         }
     }
 
-    /// The maximum revolution count this budget will search (`0` for single-only).
+    /// The maximum revolution count this budget will search.
+    ///
+    /// Returns [`None`] for [`RevolutionBudget::SingleOnly`] and
+    /// `Some(b)` for [`RevolutionBudget::UpTo`]. For driving a multi-rev
+    /// loop, prefer [`RevolutionBudget::iter_revs`] — `max()` is intended
+    /// for observability (display, logging, capacity hints).
     #[must_use]
-    pub const fn max(self) -> u32 {
+    pub const fn max(self) -> Option<BoundedRevs> {
         match self {
-            Self::SingleOnly => 0,
-            Self::UpTo(b) => b.get(),
+            Self::SingleOnly => None,
+            Self::UpTo(b) => Some(b),
         }
+    }
+
+    /// Iterator over the multi-rev branch counts this budget will search.
+    ///
+    /// Yields `1..=b.get()` for [`RevolutionBudget::UpTo`] and is empty for
+    /// [`RevolutionBudget::SingleOnly`]. This is the canonical way to drive
+    /// the multi-rev loop in the kernel — it removes the need for callers
+    /// to materialize a `0` upper-bound sentinel.
+    pub fn iter_revs(self) -> impl Iterator<Item = u32> {
+        self.max().into_iter().flat_map(|b| 1..=b.get())
     }
 }
 
@@ -269,12 +284,17 @@ impl LambertSolutions {
     /// — the silent-skip boundary referenced in [`lambert`]'s
     /// _Validity / near-degenerate behavior_ section (the paper's `M`).
     ///
-    /// `0` for [`RevolutionBudget::SingleOnly`] or when no multi-rev
-    /// branch was feasible; otherwise equal to
-    /// `self.multi.last().unwrap().n_revs`.
+    /// Returns [`None`] for [`RevolutionBudget::SingleOnly`] or when no
+    /// multi-rev branch was feasible at the requested TOF; otherwise
+    /// `Some(b)` where `b.get()` equals `self.multi.last().unwrap().n_revs`.
+    /// Pairs structurally with [`RevolutionBudget::max`] — both expose
+    /// "highest relevant `M`" through the same [`BoundedRevs`] type.
     #[must_use]
-    pub fn max_feasible_revs(&self) -> u32 {
-        self.multi.last().map_or(0, |pair| pair.n_revs)
+    pub fn max_feasible_revs(&self) -> Option<BoundedRevs> {
+        // n_revs is produced by the kernel iterating
+        // `revolutions.iter_revs()`, which is bounded by `BoundedRevs::MAX`
+        // at construction — `try_new` failing here would be a kernel bug.
+        BoundedRevs::try_new(self.multi.last()?.n_revs).ok()
     }
 }
 
@@ -342,7 +362,8 @@ pub struct LambertInput {
 /// in that same frame.
 ///
 /// Returns the always-present single-revolution trajectory, every
-/// reachable multi-rev branch up to `revolutions.max()`, and the per-branch
+/// reachable multi-rev branch up to the configured [`RevolutionBudget`]
+/// cap, and the per-branch
 /// [`SolverDiagnostics`]. The revolution budget is itself capped at
 /// [`BoundedRevs::MAX`] at construction time, so the returned `multi` set
 /// fits within [`MAX_MULTI_REV_PAIRS`] without runtime clamping.
@@ -384,8 +405,8 @@ pub struct LambertInput {
 /// [`LambertSolutions`] with the always-present `single` trajectory, a
 /// `multi` set of [`MultiRevPair`] entries in ascending `M` order, and the
 /// matching [`LambertDiagnostics`]. The `multi` set is empty for
-/// [`RevolutionBudget::SingleOnly`] and may be shorter than
-/// `revolutions.max()` if higher-`M` branches are infeasible — in which case
+/// [`RevolutionBudget::SingleOnly`] and may be shorter than the configured
+/// cap if higher-`M` branches are infeasible — in which case
 /// [`LambertSolutions::max_feasible_revs`] returns the highest `M` actually
 /// solved. Each [`LambertSolution`] carries the start and end velocities
 /// `(v1, v2)` in the input frame and units.

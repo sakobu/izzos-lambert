@@ -25,6 +25,14 @@ rather than enforced by silent runtime clamping.
   RevsOutOfRange>`** — ergonomic fallible constructor for the common
   case (literal or external `u32`). Use `RevolutionBudget::SingleOnly`
   directly to skip multi-rev.
+- **`RevolutionBudget::max()` returns `Option<BoundedRevs>`** (was
+  `u32`). `None` for `SingleOnly`, `Some(b)` for `UpTo(b)`. Removes the
+  ambiguous `0` return and matches the type-honest direction of
+  `BoundedRevs`.
+- **New `RevolutionBudget::iter_revs() -> impl Iterator<Item = u32>`** —
+  yields `1..=b.get()` for `UpTo(b)` and is empty for `SingleOnly`.
+  Canonical way to drive a multi-rev loop without re-materializing the
+  `0` upper-bound sentinel.
 - **New `RevsOutOfRange` error type** — standalone, `thiserror::Error`,
   serde-compatible. Distinct from `LambertError` because it represents
   construction-time validation, not solver-runtime failure.
@@ -33,14 +41,16 @@ rather than enforced by silent runtime clamping.
 
 ### Multi-rev silent-skip diagnostic
 
-- **New `LambertSolutions::max_feasible_revs()` method** — returns the
-  highest revolution count `M` for which a feasible
-  `(long_period, short_period)` pair was found at the requested TOF.
-  `0` when `RevolutionBudget::SingleOnly` was used or no multi-rev
-  branch was feasible. Lets callers programmatically detect the
-  silent-skip behavior at the `T_min(M) > tof` boundary that until
-  now was only documented in `lambert`'s validity rubric. JS callers
-  derive the same value from `response.multi.at(-1)?.nRevs ?? 0`.
+- **New `LambertSolutions::max_feasible_revs()` method** — returns
+  `Option<BoundedRevs>` carrying the highest revolution count `M` for
+  which a feasible `(long_period, short_period)` pair was found at the
+  requested TOF. `None` when `RevolutionBudget::SingleOnly` was used or
+  no multi-rev branch was feasible. Lets callers programmatically detect
+  the silent-skip behavior at the `T_min(M) > tof` boundary that until
+  now was only documented in `lambert`'s validity rubric. Pairs
+  symmetrically with `RevolutionBudget::max()` — both expose "highest
+  relevant `M`" through the same type. JS callers derive the same value
+  from `response.multi.at(-1)?.nRevs ?? null`.
 
 ### WASM adapter (breaking)
 
