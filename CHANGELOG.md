@@ -91,3 +91,6 @@ implementation of Izzo's revisited Lambert solver
   `lambert_izzo_wasm`, the `stress` example, and a markdown
   link-check pass via lychee (`lychee.toml`).
 - Dual-licensed `MIT OR Apache-2.0`.
+
+[Unreleased]: https://github.com/sakobu/izzos-lambert/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/sakobu/izzos-lambert/releases/tag/v1.0.0
