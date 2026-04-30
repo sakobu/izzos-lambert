@@ -1,6 +1,7 @@
 //! Interop tests: `nalgebra` / `glam` round-trips through the `[f64; 3]`
-//! public surface, and `serde_json` round-trips when the `serde` feature
-//! is on.
+//! public surface, and `serde_json` round-trips of [`crate::LambertSolutions`]
+//! when the `serde` feature is on. Exhaustive `LambertError` wire-format
+//! coverage lives in the `tests/errors_serde_roundtrip.rs` integration test.
 
 use core::f64::consts::PI;
 
@@ -33,10 +34,9 @@ fn interop_with_nalgebra_and_glam_round_trips() {
 
 #[cfg(feature = "serde")]
 #[test]
-fn serde_json_round_trip_preserves_solutions_and_errors() {
-    use crate::{LambertError, LambertSolutions};
+fn serde_json_round_trip_preserves_solutions() {
+    use crate::LambertSolutions;
 
-    // Solutions round-trip.
     let mu = MU_EARTH;
     let r1 = [8000.0, 0.0, 0.0];
     let r2 = [5600.0, 5600.0, 0.0];
@@ -54,11 +54,4 @@ fn serde_json_round_trip_preserves_solutions_and_errors() {
     let back: LambertSolutions = serde_json::from_str(&json).unwrap();
     assert_eq!(sols, back);
     assert!(!sols.multi.is_empty(), "test should exercise multi-rev branches");
-
-    // Error round-trip — discriminated union via the default external tag.
-    let err = LambertError::CollinearGeometry { sin_angle: 1e-20 };
-    let err_json = serde_json::to_string(&err).unwrap();
-    assert!(err_json.contains("CollinearGeometry"));
-    let err_back: LambertError = serde_json::from_str(&err_json).unwrap();
-    assert_eq!(err, err_back);
 }

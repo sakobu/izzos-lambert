@@ -215,9 +215,7 @@ mod bounded_revs;
 mod constants;
 mod error;
 mod geometry;
-mod multi_rev_array;
-mod multi_rev_diagnostics;
-mod multi_rev_set;
+mod multi_rev;
 mod root_finding;
 mod tof;
 mod vec3;
@@ -227,8 +225,7 @@ mod tests;
 
 pub use bounded_revs::{BoundedRevs, RevsOutOfRange};
 pub use error::{LambertError, NonFiniteParameter, Position};
-pub use multi_rev_diagnostics::MultiRevDiagnostics;
-pub use multi_rev_set::MultiRevSet;
+pub use multi_rev::{MultiRevDiagnostics, MultiRevSet};
 
 use geometry::Geometry;
 use root_finding::{Root, find_xy};

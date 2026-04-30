@@ -1,8 +1,18 @@
-//! Internal macro behind [`MultiRevSet`](crate::MultiRevSet) and
-//! [`MultiRevDiagnostics`](crate::MultiRevDiagnostics). Both expose the
-//! same read-only, capacity-bounded `ArrayVec` view; the macro lets each
-//! type carry its own rustdoc and namespacing while sharing a single
-//! implementation.
+//! Read-only collections of multi-revolution solver outputs.
+//!
+//! [`MultiRevSet`] holds the solution pairs and [`MultiRevDiagnostics`] holds
+//! the per-pair convergence stats; both wrap an
+//! `ArrayVec<_, MAX_MULTI_REV_PAIRS>` so the underlying `arrayvec` crate
+//! doesn't appear in the public API. Consumers see only
+//! `Deref<Target = [_]>` and `IntoIterator`. Capacity-bounded for `no_std`
+//! use; population is crate-private.
+//!
+//! The two types share an identical surface (`len`, `is_empty`, `iter`,
+//! deref-to-slice, by-value and by-ref `IntoIterator`) — the
+//! `multi_rev_collection!` macro defined below generates both so each can
+//! carry its own rustdoc and namespacing without duplicating the impls.
+
+use crate::{MultiRevPair, MultiRevPairDiagnostics};
 
 macro_rules! multi_rev_collection {
     (
@@ -81,4 +91,35 @@ macro_rules! multi_rev_collection {
     };
 }
 
-pub(crate) use multi_rev_collection;
+multi_rev_collection! {
+    /// Multi-revolution Lambert solution pairs in ascending `M` order.
+    ///
+    /// Stack-allocated, capacity [`MAX_MULTI_REV_PAIRS`](crate::MAX_MULTI_REV_PAIRS).
+    /// Populated by the solver; consumers read it as a slice
+    /// (`Deref<Target = [MultiRevPair]>`) or iterate by value
+    /// (`IntoIterator`). Empty for
+    /// [`RevolutionBudget::SingleOnly`](crate::RevolutionBudget) and when
+    /// no multi-rev branches are feasible for the given time of flight.
+    MultiRevSet<MultiRevPair>;
+    /// Number of multi-rev pairs in the set.
+    len();
+    /// `true` if no multi-rev pairs were found.
+    is_empty();
+    /// Iterate over the pairs by reference, in ascending `M` order.
+    iter();
+}
+
+multi_rev_collection! {
+    /// Per-pair diagnostics for the multi-revolution solver branches.
+    ///
+    /// Stack-allocated, capacity
+    /// [`MAX_MULTI_REV_PAIRS`](crate::MAX_MULTI_REV_PAIRS), populated 1:1
+    /// with [`crate::MultiRevSet`].
+    MultiRevDiagnostics<MultiRevPairDiagnostics>;
+    /// Number of entries.
+    len();
+    /// `true` if there are no diagnostics entries.
+    is_empty();
+    /// Iterate over the entries by reference, in ascending `M` order.
+    iter();
+}

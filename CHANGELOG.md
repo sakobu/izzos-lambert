@@ -7,6 +7,16 @@ it reaches `1.0`.
 
 ## [Unreleased]
 
+### Tests
+
+- **New `tests/errors_serde_roundtrip.rs` integration test** (gated on
+  `serde`) — round-trips every `LambertError` variant through
+  `serde_json` and asserts `PartialEq` equality. Catches wire-format
+  drift (variant renames, field renames, custom `#[serde(...)]`
+  attributes) that would break existing JSON consumers. Lives at the
+  `tests/` boundary so it also compile-checks the public re-exports
+  (`LambertError`, `NonFiniteParameter`, `Position`).
+
 ### Optional-feature examples
 
 - **New `examples/batch.rs`** (gated on `rayon`) — drives `lambert_par`
