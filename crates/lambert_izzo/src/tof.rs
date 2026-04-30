@@ -160,4 +160,64 @@ mod tests {
             "multi-rev TOF dispatch dropped M term: got {got}, expected {expected}"
         );
     }
+
+    /// Cross-check the analytic Eq. 22 derivatives against centered finite
+    /// differences. Catches algebra slips immediately rather than waiting
+    /// for the Householder convergence stats to regress.
+    #[test]
+    #[allow(clippy::similar_names)] // t_p1/t_m1/t_p2/t_m2 are forward/backward TOF samples at ±h, ±2h;
+    // dt_fd/ddt_fd/dddt_fd are FD-derived 1st/2nd/3rd derivatives matching tof_derivatives_with_y's tuple — Izzo Eq. 22.
+    fn analytic_derivatives_match_finite_differences() {
+        // Sample points chosen to span the Lagrange (large `|x − 1|`) and
+        // Lancaster (mid-band) regimes, single- and multi-rev.
+        // The Battin regime (`|x − 1| ≤ 0.01`) is excluded — its TOF is
+        // computed from a different formula (Eq. 20) and the Householder
+        // loop only feeds derivatives through Eq. 22 outside that band.
+        let cases = [
+            (0.5_f64, 0.3_f64, 0_u32),
+            (-0.3, 0.5, 0),
+            (0.85, 0.2, 0),
+            (0.5, 0.3, 2),
+            (-0.5, -0.4, 1),
+            (0.3, 0.7, 3),
+        ];
+
+        let h = 1e-3;
+        let tof_at = |x: f64, lambda: f64, m: u32| {
+            x_to_tof_with_y(x, compute_y(x, lambda), lambda, m)
+        };
+
+        for (x, lambda, m) in cases {
+            let t = tof_at(x, lambda, m);
+            let y = compute_y(x, lambda);
+            let (dt_a, ddt_a, dddt_a) = tof_derivatives_with_y(x, y, lambda, t);
+
+            let t_p1 = tof_at(x + h, lambda, m);
+            let t_m1 = tof_at(x - h, lambda, m);
+            let t_p2 = tof_at(x + 2.0 * h, lambda, m);
+            let t_m2 = tof_at(x - 2.0 * h, lambda, m);
+
+            let dt_fd = (t_p1 - t_m1) / (2.0 * h);
+            let ddt_fd = (t_p1 - 2.0 * t + t_m1) / (h * h);
+            let dddt_fd = (t_p2 - 2.0 * t_p1 + 2.0 * t_m1 - t_m2) / (2.0 * h * h * h);
+
+            let rel_err = |a: f64, b: f64| (a - b).abs() / a.abs().max(1.0);
+
+            assert!(
+                rel_err(dt_a, dt_fd) < 1e-5,
+                "dT/dx mismatch at (x={x}, λ={lambda}, M={m}): \
+                 analytic = {dt_a}, FD = {dt_fd}",
+            );
+            assert!(
+                rel_err(ddt_a, ddt_fd) < 1e-3,
+                "d²T/dx² mismatch at (x={x}, λ={lambda}, M={m}): \
+                 analytic = {ddt_a}, FD = {ddt_fd}",
+            );
+            assert!(
+                rel_err(dddt_a, dddt_fd) < 1e-1,
+                "d³T/dx³ mismatch at (x={x}, λ={lambda}, M={m}): \
+                 analytic = {dddt_a}, FD = {dddt_fd}",
+            );
+        }
+    }
 }

@@ -204,9 +204,18 @@ fn householder(mut x: f64, big_t: f64, lambda: f64, m: u32) -> Result<(f64, u32)
 
 /// Locate the minimum of `T(x)` along the M-revolution branch starting at
 /// `x = 0`. Halley iteration on `dT/dx = 0`. Returns `(x_min, T_min)`.
+///
+/// Halley is cubic-order and converges to f64 precision in `< HALLEY_MAX_ITERS`
+/// for every `(λ, M)` we have ever observed. The `debug_assert!` below
+/// catches the pathological case (algebra regression, fresh `(λ, M)` regime
+/// outside the tested range) loudly in debug builds. Release builds continue
+/// with the partial result — `T_min` is monotone in `M`, so a slightly
+/// inaccurate estimate at most accepts one extra branch that the Householder
+/// loop would have rejected anyway.
 #[allow(clippy::similar_names)] // dt/ddt/dddt are 1st/2nd/3rd T-derivatives — Izzo Eq. 22.
 fn halley_t_min(lambda: f64, m: u32) -> (f64, f64) {
     let mut x = 0.0;
+    let mut last_step = f64::INFINITY;
     for _ in 0..HALLEY_MAX_ITERS {
         let y = compute_y(x, lambda);
         let tof = x_to_tof_with_y(x, y, lambda, m);
@@ -217,10 +226,16 @@ fn halley_t_min(lambda: f64, m: u32) -> (f64, f64) {
         }
         let delta = 2.0 * dt * ddt / denom;
         x -= delta;
-        if delta.abs() < HALLEY_TOL {
+        last_step = delta.abs();
+        if last_step < HALLEY_TOL {
             break;
         }
     }
+    debug_assert!(
+        last_step < HALLEY_TOL,
+        "halley_t_min did not converge within {HALLEY_MAX_ITERS} iters: \
+         last |Δx| = {last_step:.3e}, λ = {lambda}, M = {m}"
+    );
     let t_min = x_to_tof_with_y(x, compute_y(x, lambda), lambda, m);
     (x, t_min)
 }

@@ -167,11 +167,14 @@ impl From<NonFiniteParameter> for NonFiniteParameterOutput {
 /// Serialized as a discriminated union: `{ kind: "VariantName", ...fields }`.
 /// JS callers can `switch` on `kind` to handle each failure mode by name.
 ///
-/// Mirrors the core enum 1:1; if a future variant is added to
-/// `LambertError`, the `From` impl below will fall through to the catch-
-/// all (`SingularDenominator { n_revs: 0 }`) — add the matching variant
-/// here when that happens.
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize, Tsify)]
+/// `LambertError` is `#[non_exhaustive]`, so a literal exhaustive match is
+/// not available to downstream crates. The [`Unknown`] variant carries the
+/// upstream error's `Display` rendering for any future variant we have not
+/// yet mirrored — JS callers should treat it as fatal and surface the
+/// message directly rather than silently mapping it to a wrong `kind`.
+///
+/// [`Unknown`]: LambertErrorOutput::Unknown
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Tsify)]
 #[serde(tag = "kind")]
 #[tsify(from_wasm_abi, into_wasm_abi)]
 pub enum LambertErrorOutput {
@@ -218,6 +221,15 @@ pub enum LambertErrorOutput {
         /// Branch index where the singularity occurred.
         n_revs: u32,
     },
+    /// A new [`LambertError`] variant has been added upstream that this
+    /// wasm adapter does not yet mirror. The `message` field is the
+    /// upstream error's `Display` rendering; JS callers should report it
+    /// verbatim. When this fires, add a matching arm to
+    /// `From<LambertError> for LambertErrorOutput`.
+    Unknown {
+        /// `Display` text of the upstream `LambertError`.
+        message: String,
+    },
 }
 
 impl From<LambertError> for LambertErrorOutput {
@@ -246,13 +258,12 @@ impl From<LambertError> for LambertErrorOutput {
                 n_revs,
             },
             LambertError::SingularDenominator { n_revs } => Self::SingularDenominator { n_revs },
-            // LambertError is #[non_exhaustive]; if a new variant ever lands
-            // upstream, add a matching arm here. Until then, fall through to
-            // a catch-all that won't fire in practice.
-            other => {
-                let _ = other;
-                Self::SingularDenominator { n_revs: 0 }
-            }
+            // LambertError is #[non_exhaustive]; new variants land in
+            // `Unknown` with the upstream Display text rather than being
+            // silently mislabeled. Add a matching arm above when extending.
+            other => Self::Unknown {
+                message: format!("{other}"),
+            },
         }
     }
 }

@@ -1,7 +1,12 @@
 # lambert_izzo
 
 Cargo workspace for Izzo's revisited Lambert solver and its WebAssembly
-adapter.
+adapter. A standalone Lambert crate — designed for callers who want a
+focused, correct, `no_std`/WASM-friendly solver without pulling a full
+astrodynamics framework just for the boundary-value step.
+
+MSRV: **Rust 1.85** (first edition-2024 stable). Pre-1.0; breaking
+changes are tracked in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Crates
 

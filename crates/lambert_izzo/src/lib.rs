@@ -65,6 +65,16 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! # Cargo features
+//!
+//! Both features are off by default.
+//!
+//! - **`serde`** — derives `Serialize` + `Deserialize` on every public
+//!   type, including [`LambertError`]. Stays `no_std`-compatible.
+//! - **`rayon`** — enables [`lambert_par_iter`] for parallel batch
+//!   evaluation. Pulls in `std` transitively and is **not**
+//!   `no_std`-compatible.
 
 #![cfg_attr(not(test), no_std)]
 #![warn(missing_docs)]
@@ -291,11 +301,29 @@ impl LambertInput {
 ///
 /// Allocation-free; just maps over the input slice. Useful for
 /// porkchop-plot-style workloads where the caller computes one Lambert
-/// solution per `(departure, arrival)` cell. Each yielded `Result` is
-/// independent — one input failing doesn't poison the rest.
+/// solution per `(departure, arrival)` cell.
 ///
 /// For parallel evaluation, enable the `rayon` feature and use
 /// [`lambert_par_iter`].
+///
+/// # Invariants
+///
+/// Per-input — same as [`lambert`].
+///
+/// # Validity / near-degenerate behavior
+///
+/// Per-input — same as [`lambert`].
+///
+/// # Returns
+///
+/// A lazy iterator that yields one `Result<LambertSolutions, LambertError>`
+/// per input, in input order. Pulls one input at a time; nothing is solved
+/// until the iterator is consumed.
+///
+/// # Errors
+///
+/// Each yielded item is independent — an input that errors does not
+/// affect the others. Per-input error variants are the same as [`lambert`].
 pub fn lambert_iter(
     inputs: &[LambertInput],
 ) -> impl Iterator<Item = Result<LambertSolutions, LambertError>> + '_ {
@@ -306,6 +334,27 @@ pub fn lambert_iter(
 ///
 /// Same semantics as [`lambert_iter`], but evaluates inputs concurrently
 /// across the Rayon thread pool. Available under the `rayon` feature.
+///
+/// # Invariants
+///
+/// Per-input — same as [`lambert`].
+///
+/// # Validity / near-degenerate behavior
+///
+/// Per-input — same as [`lambert`].
+///
+/// # Returns
+///
+/// A Rayon `ParallelIterator` yielding one `Result<LambertSolutions,
+/// LambertError>` per input. Output ordering is preserved when the caller
+/// consumes via `.collect::<Vec<_>>()` or any ordered Rayon adaptor;
+/// reduce-style consumers (`.for_each`, `.sum`) see results in arbitrary
+/// order.
+///
+/// # Errors
+///
+/// Each yielded item is independent — one input failing does not stop the
+/// other parallel tasks. Per-input error variants are the same as [`lambert`].
 #[cfg(feature = "rayon")]
 #[allow(clippy::must_use_candidate)] // Rayon's ParallelIterator isn't #[must_use]; the caller is expected to chain `.for_each` / `.collect`.
 pub fn lambert_par_iter(
@@ -358,6 +407,29 @@ pub fn lambert_par_iter(
 ///   only when `tof ≥ T_min(M, λ)`. Higher-`M` branches are dropped from
 ///   the returned `multi` vector when their `T_min` exceeds the requested TOF.
 ///
+/// # Arguments
+///
+/// - `r1` — initial position vector, any consistent inertial frame.
+/// - `r2` — final position vector, same frame as `r1`.
+/// - `tof` — time of flight from `r1` to `r2`, strictly positive.
+/// - `mu` — gravitational parameter of the central body, strictly positive.
+/// - `way` — [`TransferWay::Short`] (`θ ≤ π`) or [`TransferWay::Long`]
+///   (`θ > π`); prograde vs retrograde is set independently by the order
+///   of `(r1, r2)`, since `r1 × r2` defines the orbit's angular-momentum
+///   direction.
+/// - `revolutions` — see [`RevolutionBudget`]; `SingleOnly` skips the
+///   multi-rev search entirely, `UpTo(M)` searches `1..=M` revolutions
+///   (clamped at [`MAX_MULTI_REV_PAIRS`]).
+///
+/// # Returns
+///
+/// [`LambertSolutions`] with the always-present `single` trajectory and a
+/// `multi` array of [`MultiRevPair`] entries in ascending `M` order. The
+/// `multi` array is empty for [`RevolutionBudget::SingleOnly`] and may be
+/// shorter than `revolutions.max()` if higher-`M` branches are infeasible
+/// for the requested `tof`. Each [`LambertSolution`] carries the start
+/// and end velocities `(v1, v2)` in the input frame and units.
+///
 /// # Errors
 ///
 /// - [`LambertError::NonFiniteInput`] — any public scalar input or position
@@ -397,6 +469,19 @@ pub fn lambert(
 ///
 /// Same as [`lambert`].
 ///
+/// # Arguments
+///
+/// Same as [`lambert`].
+///
+/// # Returns
+///
+/// A `(LambertSolutions, LambertDiagnostics)` pair. The diagnostics layout
+/// is parallel to the solutions: `diagnostics.single` corresponds to
+/// `solutions.single`, and `diagnostics.multi[i]` corresponds to
+/// `solutions.multi[i]` (same index, same `n_revs`, in ascending order).
+/// Each [`SolverDiagnostics`] entry carries the Householder iteration
+/// count and the converged Lancaster–Blanchard `x` for that branch.
+///
 /// # Errors
 ///
 /// Same as [`lambert`].
@@ -431,6 +516,18 @@ pub fn solve_with_diagnostics(
 /// # Validity / near-degenerate behavior
 ///
 /// Same as [`lambert`].
+///
+/// # Arguments
+///
+/// Same as [`lambert`], minus `way` — both `Short` and `Long` are solved.
+///
+/// # Returns
+///
+/// A [`BothWaysSolutions`] with `short` and `long` fields, each a complete
+/// [`LambertSolutions`] for the corresponding traversal direction. The two
+/// halves are independent: their `multi` arrays may have different lengths
+/// because `T_min(M, λ)` differs between short-way (`λ > 0`) and long-way
+/// (`λ < 0`) formulations.
 ///
 /// # Errors
 ///
@@ -710,6 +807,56 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, LambertError::CollinearGeometry { .. }));
+    }
+
+    #[test]
+    fn errors_on_transfer_angle_exactly_zero() {
+        // r1 ∥ r2, same direction — sin(θ) = 0 exactly, contract is
+        // |sin_angle| < COLINEARITY_TOL.
+        let r1 = [7000.0, 0.0, 0.0];
+        let r2 = [21_000.0, 0.0, 0.0];
+        let err = lambert(
+            r1,
+            r2,
+            1000.0,
+            MU_EARTH,
+            TransferWay::Short,
+            RevolutionBudget::SingleOnly,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                LambertError::CollinearGeometry { sin_angle }
+                    if sin_angle.abs() < constants::COLINEARITY_TOL
+            ),
+            "expected CollinearGeometry near 0, got {err:?}",
+        );
+    }
+
+    #[test]
+    fn errors_on_transfer_angle_exactly_pi() {
+        // r1 anti-parallel to r2 — sin(θ) = 0 exactly, θ = π. Contract is
+        // |sin_angle| < COLINEARITY_TOL.
+        let r1 = [7000.0, 0.0, 0.0];
+        let r2 = [-7000.0, 0.0, 0.0];
+        let err = lambert(
+            r1,
+            r2,
+            1000.0,
+            MU_EARTH,
+            TransferWay::Short,
+            RevolutionBudget::SingleOnly,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                LambertError::CollinearGeometry { sin_angle }
+                    if sin_angle.abs() < constants::COLINEARITY_TOL
+            ),
+            "expected CollinearGeometry near π, got {err:?}",
+        );
     }
 
     #[test]

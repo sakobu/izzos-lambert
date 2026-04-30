@@ -97,7 +97,7 @@ round-off (~1e-12 single-rev, ~1e-14 multi-rev).
 - **`no_std` support.** Core kernel compiles without the standard
   library; transcendental math routes through `num_traits::Float` (with
   `libm`). Tested via `cargo build --target wasm32-unknown-unknown -p
-  lambert_izzo --no-default-features --lib`.
+lambert_izzo --no-default-features --lib`.
 - **`serde` feature.** Optional `Serialize`/`Deserialize` derives on
   every public type, including `LambertError` (now serializes to a
   discriminated union via the externally-tagged default).
@@ -139,13 +139,13 @@ round-off (~1e-12 single-rev, ~1e-14 multi-rev).
   `nalgebra::Vector3<f64>` and `glam::DVec3` already convert to/from
   `[f64; 3]` natively.
 - **`Vec<LambertSolution>` → `LambertSolutions { single, multi:
-  ArrayVec<MultiRevPair, MAX_MULTI_REV_PAIRS> }`.** The implicit
+ArrayVec<MultiRevPair, MAX_MULTI_REV_PAIRS> }`.** The implicit
   chunk-by-2 multi-rev convention is gone; pairing is encoded in the
   `MultiRevPair { n_revs, long_period, short_period }` type. Zero heap
   allocation on the solver hot path.
 - **`SolverDiagnostics` removed from `LambertSolution`.** A new
   `solve_with_diagnostics(...)` returns `(LambertSolutions,
-  LambertDiagnostics)` for callers that need iteration counts and the
+LambertDiagnostics)` for callers that need iteration counts and the
   Lancaster–Blanchard `x`.
 
 ### Added
@@ -170,8 +170,7 @@ round-off (~1e-12 single-rev, ~1e-14 multi-rev).
   (single + multi-revolution, short + long way).
 - Three-regime time-of-flight dispatch (Battin / Lancaster–Blanchard /
   Lagrange) with documented thresholds in `constants.rs`.
-- Householder iteration with derivative-matched starters (Izzo Eq. 30,
-  31) and Halley `T_min` search for multi-rev infeasibility.
+- Householder iteration with derivative-matched starters (Izzo Eq. 30, 31) and Halley `T_min` search for multi-rev infeasibility.
 - Round-trip Kepler validation via universal-variable propagator;
   `examples/stress.rs` reproduces Izzo §5 statistical sweeps.
 - Strict lint baseline: `clippy::pedantic` + bans on `unwrap`/`expect`/
