@@ -4,12 +4,14 @@ A Rust port of Dario Izzo's revisited Lambert solver from the 2014 paper
 _"Revisiting Lambert's Problem"_
 ([arXiv:1403.2705](https://arxiv.org/abs/1403.2705) / Celestial Mechanics &
 Dynamical Astronomy). A local copy of the paper lives at
-[`docs/izzo.pdf`](docs/izzo.pdf); for a friendly intro to the problem,
-read [`docs/concepts.md`](docs/concepts.md) first.
+[`docs/izzo.pdf`](https://github.com/sakobu/izzos_lambert/blob/main/docs/izzo.pdf);
+for a friendly intro to the problem, read
+[`docs/concepts.md`](https://github.com/sakobu/izzos_lambert/blob/main/docs/concepts.md)
+first.
 
 Stable at `1.0.0`. Breaking changes follow strict semver; the
-[`CHANGELOG.md`](CHANGELOG.md) is the source of truth for migration
-notes between releases.
+[`CHANGELOG.md`](https://github.com/sakobu/izzos_lambert/blob/main/CHANGELOG.md)
+is the source of truth for migration notes between releases.
 
 ## What this solves (and what it doesn't)
 
@@ -386,6 +388,9 @@ math.
     `T_min` search.
   - `bounded_revs.rs` — `BoundedRevs` newtype + `RevsOutOfRange`
     construction error.
+  - `multi_rev.rs` — `MultiRevSet` and `MultiRevDiagnostics`,
+    bounded-collection newtypes wrapping `ArrayVec` so it stays out of
+    the public API.
   - `lib.rs` — public API surface and the `lambert` entry point.
   - `tests/` — per-scenario test modules (`single_rev`, `multi_rev`,
     `errors`, `regimes`, `interop`, `kepler_roundtrip`).

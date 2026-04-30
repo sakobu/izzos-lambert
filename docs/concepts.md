@@ -89,7 +89,6 @@ function with a minimum and a single root for any feasible `tof`.
 Multi-rev branches add `M·π` periods, splitting `T(x)` into pieces with
 their own minima — hence the long-period and short-period roots per `M`.
 
-Returned in `SolverDiagnostics::lancaster_blanchard_x` if you want it.
 The long-period branch always has the smaller `x` for a given `M`.
 
 ## What the three TOF regimes are about
@@ -104,8 +103,8 @@ Numerically, the time-of-flight formula for a given `x` is unstable near
 - **Lagrange form** (Izzo Eq. 9) for `|x − 1| > 0.2` — stable far from
   parabolic.
 
-You don't pick the regime — `tof::x_to_tof` does. The thresholds live
-in `constants.rs` with rationale.
+You don't pick the regime — the dispatcher in `tof.rs` does. The
+thresholds live in `constants.rs` with rationale.
 
 ## What this crate doesn't do
 

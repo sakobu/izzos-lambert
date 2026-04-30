@@ -22,6 +22,10 @@ The core crate stays free of JavaScript concerns. The WASM crate owns
 TypeScript type generation and JavaScript error conversion. The test
 support crate is path-only — it never reaches `crates.io`.
 
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for a code map of the solver
+pipeline (input validation → geometry → root finding → TOF dispatch →
+velocity reconstruction).
+
 ## Rust usage
 
 ```rust
