@@ -423,6 +423,34 @@ pub struct LambertInput {
 /// - [`LambertError::CollinearGeometry`] — transfer plane undefined.
 /// - [`LambertError::NoConvergence`] / [`LambertError::SingularDenominator`]
 ///   — Householder iteration failed.
+///
+/// # Examples
+///
+/// Multi-revolution search up to `M = 3` on a 90° LEO transfer with a
+/// time of flight long enough for at least one revolution to be feasible:
+///
+/// ```
+/// use lambert_izzo::{lambert, LambertInput, RevolutionBudget, TransferWay};
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let mu = 398_600.4418;
+/// let r = 7000.0_f64;
+/// let period = 2.0 * core::f64::consts::PI * (r.powi(3) / mu).sqrt();
+///
+/// let solutions = lambert(&LambertInput {
+///     r1: [r, 0.0, 0.0],
+///     r2: [0.0, r, 0.0],
+///     tof: 2.5 * period,                              // long enough for M ≥ 1
+///     mu,
+///     way: TransferWay::Short,
+///     revolutions: RevolutionBudget::try_up_to(3)?,   // RevsOutOfRange if > MAX
+/// })?;
+///
+/// assert!(!solutions.multi.is_empty());
+/// assert!(solutions.multi.len() <= 3);
+/// # Ok(())
+/// # }
+/// ```
 pub fn lambert(input: &LambertInput) -> Result<LambertSolutions, LambertError> {
     let geom = Geometry::from_inputs(input.r1, input.r2, input.tof, input.mu, input.way)?;
     let roots = find_xy(&geom, input.revolutions)?;
