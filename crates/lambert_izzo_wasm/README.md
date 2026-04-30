@@ -73,7 +73,25 @@ type BatchResult =
 ```
 
 `LambertErrorOutput` is a discriminated union: switch on `error.kind` to
-handle each failure mode.
+handle each failure mode. A concrete example:
+
+```js
+{
+  kind: "DegeneratePositionVector",
+  position: "R1",
+  norm: 0.0,
+}
+```
+
+The discriminator values are: `NonFiniteInput`, `NonPositiveTimeOfFlight`,
+`NonPositiveMu`, `DegeneratePositionVector`, `CollinearGeometry`,
+`NoConvergence`, `SingularDenominator`, `RevsOutOfRange`, and `Unknown`.
+
+`Unknown { message }` is a forward-compat fallback fired only if the
+upstream Rust crate adds a new `LambertError` variant that this wasm
+adapter does not yet mirror; `message` is the upstream error's `Display`
+text. JS callers writing exhaustive `switch` blocks should include an
+`Unknown` arm and report `message` verbatim.
 
 ## Differences from the Rust crate
 
@@ -92,7 +110,8 @@ output's `.d.ts`.
 
 - The Rust crate: <https://crates.io/crates/lambert_izzo> (canonical API,
   `[f64; 3]` surface, no hard math-library dependency).
-- The single-page browser demo at `examples/web/`.
+- The single-page browser demo at `crates/lambert_izzo_wasm/examples/web/`
+  in the source repo.
 - The reference paper: D. Izzo, *Revisiting Lambert's problem*, CMDA 2014
   (arXiv:1403.2705).
 
@@ -100,10 +119,18 @@ output's `.d.ts`.
 
 ```bash
 wasm-pack build crates/lambert_izzo_wasm --target bundler --release
-# or --target web (browser ES modules) / --target nodejs
 ```
 
 The generated `crates/lambert_izzo_wasm/pkg/` is the npm artefact.
+
+`wasm-pack` supports several target environments — pick the one that
+matches how the consumer loads the module:
+
+| Flag | When to use |
+|------|-------------|
+| `--target bundler` | npm consumers using Vite, webpack, Rollup, or any bundler that resolves `import` statements. **This is what the published npm package ships with.** |
+| `--target web` | Direct browser ES-module imports, no bundler. Matches the `examples/web/` demo. |
+| `--target nodejs` | CommonJS consumption from Node.js. |
 
 ### Publishing to npm
 

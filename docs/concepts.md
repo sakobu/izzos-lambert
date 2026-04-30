@@ -108,14 +108,14 @@ thresholds live in `constants.rs` with rationale.
 
 ## What this crate doesn't do
 
-- Escape trajectories from one body to another (e.g. Earth-to-Mars
-  *patched-conic* with sphere-of-influence handoffs). Lambert solves
-  the inertial transfer; you assemble the patched-conic story around it.
-- Lunar swing-by or higher-order n-body effects. Pure two-body.
-- Low-thrust transfers. Lambert is impulsive — instant Δv at endpoints.
-- Constraint-satisfaction (e.g. "land between these two delta-V budgets"
-  — that's an outer optimization loop calling Lambert in the inner
-  loop).
+The crate-level [feature support table](../crates/lambert_izzo/README.md#what-this-solves-and-what-it-doesnt)
+covers the formal supported-vs-out-of-scope split. The conceptual
+through-line: Lambert solves the inertial two-body boundary-value
+problem, period. Patched-conic stitching, n-body perturbations,
+low-thrust burns, and outer-loop optimization (porkchop-min,
+primer-vector, …) are all *things you call Lambert from* — not things
+Lambert does for you. Δv is impulsive at the endpoints; everything
+else is the caller's story to assemble.
 
 ## Further reading
 

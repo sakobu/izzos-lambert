@@ -401,7 +401,7 @@ math.
   Lancaster–Blanchard (Eq. 18) for `0.01 < |x − 1| ≤ 0.2`, and Lagrange
   (Eq. 9) elsewhere. The Battin path uses a direct series sum of
   `2F1(3, 1; 5/2; S1)`.
-- Root finding uses Householder's 3rd-order method per the paper, with
+- Root finding uses Householder's third-order method per the paper, with
   separate tolerances `1e-5` for `M = 0` and `1e-8` for `M > 0`.
 - For multi-rev, `T_min` is found via Halley's method on `dT/dx = 0`
   before deciding which revolution counts admit solutions.

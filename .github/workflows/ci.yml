@@ -116,3 +116,14 @@ jobs:
         with:
           key: stress
       - run: cargo run --release -p lambert_izzo --example stress
+
+  links:
+    name: markdown link check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: lychee
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: --no-progress --verbose --max-concurrency 4 './**/*.md'
+          fail: true

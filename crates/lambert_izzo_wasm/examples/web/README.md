@@ -33,7 +33,8 @@ count from `response.diagnostics.single.iters`.
 
 - Default request: a 90° circular LEO transfer at 7000 km altitude, Earth
   gravity (`mu = 398_600.4418 km³/s²`).
-- Edits to the form fields re-run the solve immediately.
+- The solve fires on the **Solve** button click — edit the form, then
+  click to run `solveLambert` with the new request.
 - Errors render the typed `error.kind` discriminator and message —
   trigger one by setting `r1` to `[0, 0, 0]` (degenerate) or `tof` to a
   negative number.

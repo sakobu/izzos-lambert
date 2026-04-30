@@ -8,7 +8,8 @@ astrodynamics framework just for the boundary-value step.
 Reference: D. Izzo, *Revisiting Lambert's problem*, Celestial Mechanics &
 Dynamical Astronomy, 2014 (arXiv:1403.2705).
 
-MSRV: **Rust 1.85** (first edition-2024 stable).
+MSRV: **Rust 1.85** (first edition-2024 stable). `rust-toolchain.toml`
+pins **1.88.0** for development; the published-crate MSRV is 1.85.
 
 ## Crates
 
@@ -16,7 +17,7 @@ MSRV: **Rust 1.85** (first edition-2024 stable).
 |-------|------|--------------|
 | `lambert_izzo` | `crates/lambert_izzo` | crates.io — pure Rust, `[f64; 3]` API, no hard math dep, `no_std`. |
 | `lambert_izzo_wasm` | `crates/lambert_izzo_wasm` | npm via `wasm-pack` — JS/TS bindings. |
-| `lambert_izzo_test_support` | `crates/lambert_izzo_test_support` | workspace-internal (`publish = false`) — astrodynamics constants, Kepler propagator, deterministic random batches for examples / benches / tests. |
+| `lambert_izzo_test_support` | [`crates/lambert_izzo_test_support`](crates/lambert_izzo_test_support/README.md) | workspace-internal (`publish = false`) — astrodynamics constants, Kepler propagator, deterministic random batches for examples / benches / tests. |
 
 The core crate stays free of JavaScript concerns. The WASM crate owns
 TypeScript type generation and JavaScript error conversion. The test
@@ -34,7 +35,7 @@ use lambert_izzo::{lambert, LambertInput, RevolutionBudget, TransferWay};
 let input = LambertInput {
     r1: [7000.0, 0.0, 0.0],
     r2: [0.0, 7000.0, 0.0],
-    tof: 1457.0,
+    tof: 1457.0, // ~quarter-period of a 7000 km circular Earth orbit
     mu: 398_600.4418,
     way: TransferWay::Short,
     revolutions: RevolutionBudget::SingleOnly,
@@ -57,17 +58,22 @@ Build the wrapper as an npm package with `wasm-pack`:
 wasm-pack build crates/lambert_izzo_wasm --target web --release
 ```
 
+`--target web` produces a browser-importable ES module. For npm consumers
+via Vite / webpack / Rollup, build with `--target bundler` instead — see
+[`crates/lambert_izzo_wasm/README.md`](crates/lambert_izzo_wasm/README.md)
+for the full target table.
+
 Then import the generated package from a browser or bundler app:
 
 ```ts
-import init, { solveLambert, solveLambertBatch } from "./pkg/lambert_izzo_wasm";
+import init, { solveLambert } from "./pkg/lambert_izzo_wasm";
 
 await init();
 
 const response = solveLambert({
   r1: [7000, 0, 0],
   r2: [0, 7000, 0],
-  tof: 1457,
+  tof: 1457, // ~quarter-period of a 7000 km circular Earth orbit
   mu: 398600.4418,
   way: "short",
   maxRevs: null, // null = single-rev only; pass 1..=32 to search multi-rev branches

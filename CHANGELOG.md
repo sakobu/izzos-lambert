@@ -6,18 +6,6 @@ the project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Tooling
-
-- CI: GitHub Actions workflow at `.github/workflows/ci.yml` covering
-  MSRV (1.85) build × four feature combos, full build/test/doctest
-  on stable × four feature combos, clippy, docs (with
-  `RUSTDOCFLAGS: -D warnings`), wasm32 build for `lambert_izzo` and
-  `lambert_izzo_wasm`, and the `stress` example.
-- Benches: `multi_rev` parametrized across `M ∈ {1, 3, 5}` via
-  Criterion's `bench_with_input`; new `multi_rev_battin` group exercising
-  the Battin near-parabolic regime (`|x − 1| < BATTIN_THRESHOLD`) via a
-  near-180° geometry with TOF jittered around the parabolic time-of-flight.
-
 ## [1.0.0] — 2026-04-30
 
 Initial public release. `lambert_izzo` is a `no_std`-friendly Rust
@@ -75,6 +63,10 @@ implementation of Izzo's revisited Lambert solver
   JavaScript / TypeScript request and response types via `tsify`.
   Errors map to a tag-discriminated union; a forward-compat
   `Unknown { message }` variant guards against future core variants.
+  Publishes to npm as
+  [`lambert-izzo`](https://www.npmjs.com/package/lambert-izzo),
+  version-locked to the workspace `Cargo.toml` — npm version matches
+  the crates.io version.
 - **`lambert_izzo_test_support`** — workspace-internal dev fixtures
   (`publish = false`): SI body constants, rejection-sampling unit
   vectors, deterministic batch generator, universal-variable Kepler
@@ -86,5 +78,14 @@ implementation of Izzo's revisited Lambert solver
 - MSRV: Rust 1.85 (first edition-2024 stable).
 - Examples: `demo`, `stress`, `errors`, `batch` (`rayon`-gated), and
   `serde` (`serde`-gated).
-- Benches: `single_rev`, `multi_rev`, `batch` via Criterion.
+- Benches: `single_rev`, `batch`, and `multi_rev` (parametrized across
+  `M ∈ {1, 3, 5}` via Criterion's `bench_with_input`); a
+  `multi_rev_battin` group exercises the Battin near-parabolic regime
+  (`|x − 1| < BATTIN_THRESHOLD`) via a near-180° geometry with TOF
+  jittered around the parabolic time-of-flight.
+- CI: GitHub Actions workflow at `.github/workflows/ci.yml` covering
+  MSRV (1.85) build × four feature combos, full build/test/doctest
+  on stable × four feature combos, clippy, docs (with
+  `RUSTDOCFLAGS: -D warnings`), wasm32 build for `lambert_izzo` and
+  `lambert_izzo_wasm`, and the `stress` example.
 - Dual-licensed `MIT OR Apache-2.0`.
