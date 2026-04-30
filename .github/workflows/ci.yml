@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: test (${{ matrix.toolchain }} ${{ matrix.features }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: ["1.85.0", "stable"]
+        features:
+          - "--no-default-features"
+          - "--features serde"
+          - "--features rayon"
+          - "--all-features"
+    env:
+      RUSTUP_TOOLCHAIN: ${{ matrix.toolchain }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test-${{ matrix.toolchain }}-${{ matrix.features }}
+      - run: cargo build --workspace ${{ matrix.features }}
+      - run: cargo test --workspace ${{ matrix.features }}
+      - run: cargo test --doc -p lambert_izzo ${{ matrix.features }}
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: clippy
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: stable
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: docs
+      - run: cargo doc --workspace --no-deps --all-features
+
+  wasm:
+    name: wasm build
+    runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm
+      - run: cargo build --target wasm32-unknown-unknown -p lambert_izzo --lib
+      - run: cargo build --target wasm32-unknown-unknown -p lambert_izzo --lib --features serde
+      - run: cargo build --target wasm32-unknown-unknown -p lambert_izzo_wasm --lib
+
+  stress:
+    name: stress example
+    runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: stress
+      - run: cargo run --release -p lambert_izzo --example stress
