@@ -7,6 +7,17 @@ it reaches `1.0`.
 
 ## [Unreleased]
 
+### Optional-feature examples
+
+- **New `examples/batch.rs`** (gated on `rayon`) — drives `lambert_par`
+  over 10 000 randomized Earth-scale inputs and reports wall-clock
+  throughput plus the mean Householder iteration count across successful
+  solves. Run with `cargo run --release --example batch --features rayon`.
+- **New `examples/serde.rs`** (gated on `serde`) — round-trips a
+  `LambertSolutions` and a `LambertError` through `serde_json`,
+  asserting `PartialEq` equality on both ends. Run with
+  `cargo run --release --example serde --features serde`.
+
 ### Type-enforced revolution cap (breaking)
 
 The `MAX_MULTI_REV_PAIRS = 32` cap on multi-rev pairs is now type-level

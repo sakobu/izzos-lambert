@@ -1,67 +1,100 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<title>lambert-izzo web demo</title>
-<style>
-  body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
-  h1 { font-size: 1.2rem; }
-  fieldset { border: 1px solid #ccc; padding: 0.75rem 1rem; margin-bottom: 1rem; }
-  label { display: inline-block; width: 5.5rem; }
-  input[type="text"], input[type="number"] { width: 14rem; }
-  pre { background: #f4f4f4; padding: 0.75rem; border-radius: 4px; overflow-x: auto; }
-  .err { color: #b00; }
-</style>
-</head>
-<body>
-<h1>lambert-izzo — Izzo's Lambert solver, in your browser</h1>
+  <head>
+    <meta charset="utf-8" />
+    <title>lambert-izzo web demo</title>
+    <style>
+      body {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        max-width: 720px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+      }
+      h1 {
+        font-size: 1.2rem;
+      }
+      fieldset {
+        border: 1px solid #ccc;
+        padding: 0.75rem 1rem;
+        margin-bottom: 1rem;
+      }
+      label {
+        display: inline-block;
+        width: 5.5rem;
+      }
+      input[type="text"],
+      input[type="number"] {
+        width: 14rem;
+      }
+      pre {
+        background: #f4f4f4;
+        padding: 0.75rem;
+        border-radius: 4px;
+        overflow-x: auto;
+      }
+      .err {
+        color: #b00;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>lambert-izzo — Izzo's Lambert solver, in your browser</h1>
 
-<fieldset>
-  <legend>Request (km, s, km³/s²)</legend>
-  <label>r1</label> <input id="r1" type="text" value="7000, 0, 0"><br>
-  <label>r2</label> <input id="r2" type="text" value="0, 7000, 0"><br>
-  <label>tof (s)</label> <input id="tof" type="number" step="any" value="1457"><br>
-  <label>mu</label> <input id="mu" type="number" step="any" value="398600.4418"><br>
-  <label>way</label>
-  <select id="way">
-    <option value="short" selected>short</option>
-    <option value="long">long</option>
-  </select><br>
-  <label>maxRevs</label> <input id="maxRevs" type="number" min="1" max="32" placeholder="blank = single-rev only"><br>
-  <button id="solve">Solve</button>
-</fieldset>
+    <fieldset>
+      <legend>Request (km, s, km³/s²)</legend>
+      <label>r1</label> <input id="r1" type="text" value="7000, 0, 0" /><br />
+      <label>r2</label> <input id="r2" type="text" value="0, 7000, 0" /><br />
+      <label>tof (s)</label>
+      <input id="tof" type="number" step="any" value="1457" /><br />
+      <label>mu</label>
+      <input id="mu" type="number" step="any" value="398600.4418" /><br />
+      <label>way</label>
+      <select id="way">
+        <option value="short" selected>short</option>
+        <option value="long">long</option></select
+      ><br />
+      <label>maxRevs</label>
+      <input
+        id="maxRevs"
+        type="number"
+        min="1"
+        max="32"
+        placeholder="blank = single-rev only"
+      /><br />
+      <button id="solve">Solve</button>
+    </fieldset>
 
-<pre id="out">Click <em>Solve</em> after the wasm module loads.</pre>
+    <pre id="out">Click <em>Solve</em> after the wasm module loads.</pre>
 
-<script type="module">
-import init, { solveLambert } from "./pkg/lambert_izzo_wasm.js";
+    <script type="module">
+      import init, { solveLambert } from "./pkg/lambert_izzo_wasm.js";
 
-const out = document.getElementById("out");
+      const out = document.getElementById("out");
 
-await init();
-out.textContent = "Wasm loaded. Click Solve.";
+      await init();
+      out.textContent = "Wasm loaded. Click Solve.";
 
-document.getElementById("solve").addEventListener("click", () => {
-  const parseVec = (s) => s.split(",").map((x) => Number(x.trim()));
-  const maxRevsRaw = document.getElementById("maxRevs").value.trim();
-  const maxRevs = maxRevsRaw === "" ? null : Number(maxRevsRaw);
-  const request = {
-    r1: parseVec(document.getElementById("r1").value),
-    r2: parseVec(document.getElementById("r2").value),
-    tof: Number(document.getElementById("tof").value),
-    mu: Number(document.getElementById("mu").value),
-    way: document.getElementById("way").value,
-    maxRevs,
-  };
-  try {
-    const response = solveLambert(request);
-    out.classList.remove("err");
-    out.textContent = JSON.stringify(response, null, 2);
-  } catch (error) {
-    out.classList.add("err");
-    out.textContent = "error: " + JSON.stringify(error, null, 2);
-  }
-});
-</script>
-</body>
+      document.getElementById("solve").addEventListener("click", () => {
+        const parseVec = (s) => s.split(",").map((x) => Number(x.trim()));
+        const maxRevsRaw = document.getElementById("maxRevs").value.trim();
+        const maxRevs = maxRevsRaw === "" ? null : Number(maxRevsRaw);
+        const request = {
+          r1: parseVec(document.getElementById("r1").value),
+          r2: parseVec(document.getElementById("r2").value),
+          tof: Number(document.getElementById("tof").value),
+          mu: Number(document.getElementById("mu").value),
+          way: document.getElementById("way").value,
+          maxRevs,
+        };
+        try {
+          const response = solveLambert(request);
+          out.classList.remove("err");
+          out.textContent = JSON.stringify(response, null, 2);
+        } catch (error) {
+          out.classList.add("err");
+          out.textContent = "error: " + JSON.stringify(error, null, 2);
+        }
+      });
+    </script>
+  </body>
 </html>

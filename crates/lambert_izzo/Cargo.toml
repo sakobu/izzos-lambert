@@ -49,3 +49,11 @@ harness = false
 [[bench]]
 name = "batch"
 harness = false
+
+[[example]]
+name = "batch"
+required-features = ["rayon"]
+
+[[example]]
+name = "serde"
+required-features = ["serde"]

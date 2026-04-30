@@ -351,10 +351,15 @@ cargo test --release
 cargo run --release --example demo
 cargo run --release --example stress
 cargo run --release --example errors
+cargo run --release --example batch --features rayon
+cargo run --release --example serde --features serde
 ```
 
 The `errors` example walks every `LambertError` variant — useful as a
-template for caller-side error handling.
+template for caller-side error handling. The `batch` example demonstrates
+`lambert_par` over 10 000 randomized inputs and reports throughput. The
+`serde` example shows the JSON shape of `LambertSolutions` and
+`LambertError` and round-trips both through `serde_json`.
 
 Toolchain pinned via `rust-toolchain.toml` (1.88.0) for development;
 MSRV declared in `Cargo.toml` is 1.85. Edition 2024. Runtime
