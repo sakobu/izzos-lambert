@@ -8,22 +8,19 @@ The Rust core stays free of WASM concerns; this crate adds the
 
 ## Install
 
-Built with [`wasm-pack`](https://rustwasm.github.io/wasm-pack/). The
-generated `pkg/` is the npm artefact:
-
 ```bash
-wasm-pack build crates/lambert_izzo_wasm --target web --release
-# or --target bundler / --target nodejs
+npm install lambert-izzo
 ```
 
-The package name in `pkg/package.json` is `lambert-izzo-wasm` by default
-(derived from the Cargo crate name with underscores → hyphens). Override
-the npm name via `wasm-pack`'s flags if a shorter name is preferred.
+Works with bundlers (Vite, webpack, Rollup), browser ES modules, and
+Node.js. The npm package is built with
+[`wasm-pack`](https://rustwasm.github.io/wasm-pack/) targeting `bundler`;
+see [Building from source](#building-from-source) for the other targets.
 
 ## Usage
 
 ```js
-import init, { solveLambert, solveLambertBatch } from "lambert-izzo-wasm";
+import init, { solveLambert, solveLambertBatch } from "lambert-izzo";
 
 await init();
 
@@ -98,6 +95,37 @@ output's `.d.ts`.
 - The single-page browser demo at `examples/web/`.
 - The reference paper: D. Izzo, *Revisiting Lambert's problem*, CMDA 2014
   (arXiv:1403.2705).
+
+## Building from source
+
+```bash
+wasm-pack build crates/lambert_izzo_wasm --target bundler --release
+# or --target web (browser ES modules) / --target nodejs
+```
+
+The generated `crates/lambert_izzo_wasm/pkg/` is the npm artefact.
+
+### Publishing to npm
+
+`wasm-pack` derives the npm package name from the Cargo crate name
+(`lambert_izzo_wasm` → `lambert-izzo-wasm`). The published package is
+`lambert-izzo` instead — Cargo can't reuse that name (the core crate on
+crates.io already owns it), so the rename happens in the generated
+`pkg/package.json` between build and publish:
+
+```bash
+wasm-pack build crates/lambert_izzo_wasm --target bundler --release
+
+jq '.name = "lambert-izzo"' crates/lambert_izzo_wasm/pkg/package.json \
+  > crates/lambert_izzo_wasm/pkg/.package.json.tmp \
+  && mv crates/lambert_izzo_wasm/pkg/.package.json.tmp \
+        crates/lambert_izzo_wasm/pkg/package.json
+
+cd crates/lambert_izzo_wasm/pkg && npm publish
+```
+
+The version comes from the workspace `Cargo.toml` and stays in lockstep
+with the `lambert_izzo` crates.io release.
 
 ## License
 
