@@ -45,7 +45,7 @@ Supports:
 - `no_std`-friendly — pulls only `arrayvec`, `num-traits` (with `libm`),
   and `thiserror` (`std`-feature off) at runtime
 - WASM-compatible math kernel
-  (`cargo build --target wasm32-unknown-unknown --no-default-features --lib`)
+  (`cargo build --target wasm32-unknown-unknown -p lambert_izzo --lib`)
 - Zero hard math-library dependency — public surface is `[f64; 3]`
 
 ## Features
@@ -306,6 +306,14 @@ cargo bench --bench multi_rev
 cargo bench --bench batch --features rayon
 ```
 
+The `multi_rev` bench contains two Criterion groups: `multi_rev`
+(parametrized across `M ∈ {1, 3, 5}`) and `multi_rev_battin` (a
+deterministic ~177° geometry whose solutions land in the Battin
+near-parabolic regime, `|x − 1| < BATTIN_THRESHOLD`). The
+"Battin near-parabolic" row above comes from the latter; filter to
+just that group with
+`cargo bench --bench multi_rev -- multi_rev_battin`.
+
 ## Batch / streaming API
 
 For porkchop plots, multi-shooter loops, or any workload with thousands
@@ -320,7 +328,7 @@ let inputs: Vec<LambertInput> = (0..10_000)
     .map(|_| LambertInput {
         r1: [7000.0, 0.0, 0.0],
         r2: [0.0, 7000.0, 0.0],
-        tof: 1500.0,
+        tof: 1457.0, // ~quarter-period of a 7000 km circular Earth orbit
         mu: 398_600.4418,
         way: TransferWay::Short,
         revolutions: RevolutionBudget::SingleOnly,

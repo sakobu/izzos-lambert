@@ -24,8 +24,9 @@ implementation of Izzo's revisited Lambert solver
   (Izzo Eq. 30, 31) and Halley `T_min` search for multi-revolution
   feasibility detection.
 - Round-trip Kepler validation via a universal-variable Stumpff
-  propagator; `examples/stress.rs` runs 200,000 randomized trials
-  with vis-viva and angular-momentum conservation checks.
+  propagator; `examples/stress.rs` runs 100,000 single-rev plus
+  100,000 multi-rev randomized trials with vis-viva and
+  angular-momentum conservation checks.
 
 ### Public API
 
@@ -87,5 +88,6 @@ implementation of Izzo's revisited Lambert solver
   MSRV (1.85) build × four feature combos, full build/test/doctest
   on stable × four feature combos, clippy, docs (with
   `RUSTDOCFLAGS: -D warnings`), wasm32 build for `lambert_izzo` and
-  `lambert_izzo_wasm`, and the `stress` example.
+  `lambert_izzo_wasm`, the `stress` example, and a markdown
+  link-check pass via lychee (`lychee.toml`).
 - Dual-licensed `MIT OR Apache-2.0`.
