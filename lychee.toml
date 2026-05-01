@@ -4,6 +4,15 @@ exclude_loopback = true
 
 # npmjs.com responds 403 to non-browser HEAD/GET from GitHub Actions runners
 # even though the package page exists. Well-known lychee false positive.
+#
+# GitHub `compare/` URLs in CHANGELOG.md are inherently ephemeral around a
+# release commit: `[Unreleased]: …/compare/vX.Y.Z…HEAD` is always ahead of
+# the highest tag, and the `[X.Y.Z]: …/compare/vA.B.C…vX.Y.Z` link added
+# at version-bump time can't resolve until the new tag is pushed (which
+# the deployment flow does only *after* CI passes). Once tagged, these
+# resolve in real browsers — but lychee runs in the CI gap and fails. The
+# fixed-tag links (`releases/tag/vX.Y.Z`) are still checked normally.
 exclude = [
     "^https://www\\.npmjs\\.com/",
+    "^https://github\\.com/sakobu/izzos-lambert/compare/",
 ]
