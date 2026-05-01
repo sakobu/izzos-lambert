@@ -6,6 +6,8 @@ the project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-05-01
+
 ### Changed (breaking — `lambert_izzo_wasm` only)
 
 - `solveLambert` no longer throws on solver failure. It now returns the
@@ -110,5 +112,6 @@ implementation of Izzo's revisited Lambert solver
   link-check pass via lychee (`lychee.toml`).
 - Dual-licensed `MIT OR Apache-2.0`.
 
-[Unreleased]: https://github.com/sakobu/izzos-lambert/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/sakobu/izzos-lambert/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/sakobu/izzos-lambert/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/sakobu/izzos-lambert/releases/tag/v1.0.0
