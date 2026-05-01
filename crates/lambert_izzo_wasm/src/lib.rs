@@ -16,7 +16,7 @@ use lambert_izzo::{
 };
 use serde::{Deserialize, Serialize};
 use tsify::Tsify;
-use wasm_bindgen::prelude::{JsValue, wasm_bindgen};
+use wasm_bindgen::prelude::wasm_bindgen;
 
 /// Direction around the transfer plane from `r1` to `r2`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Tsify)]
@@ -324,15 +324,20 @@ impl From<RevsOutOfRange> for LambertErrorOutput {
     }
 }
 
-/// One element of a batch response: success carries the response, failure
-/// carries the structured error.
+/// The outcome of a single Lambert solve: success carries the response,
+/// failure carries the structured error.
 ///
 /// Serialized as a tagged union: `{ kind: "ok", response: ... }` or
 /// `{ kind: "err", error: ... }`. JS can narrow on `result.kind`.
+///
+/// Used as the return type of both [`solve_lambert`] (one outcome) and
+/// [`solve_lambert_batch`] (one outcome per request, in input order),
+/// so the JS-side error-handling shape is the same regardless of which
+/// entry point is called.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Tsify)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 #[tsify(from_wasm_abi, into_wasm_abi)]
-pub enum BatchResult {
+pub enum LambertOutcome {
     /// The solver succeeded; `response` carries the trajectories and
     /// diagnostics.
     Ok {
@@ -349,6 +354,10 @@ pub enum BatchResult {
 
 /// Solve a Lambert request from JavaScript.
 ///
+/// Returns a [`LambertOutcome`] tagged union — never throws. JS callers
+/// narrow on `result.kind === "ok"` / `"err"` to access the response or
+/// the structured error.
+///
 /// # Invariants
 ///
 /// Same as [`lambert_izzo::lambert`]. Inputs come through
@@ -361,24 +370,21 @@ pub enum BatchResult {
 ///
 /// # Errors
 ///
-/// Returns a structured [`LambertErrorOutput`] (serialized as a JS object
-/// with a `kind` discriminator) when the core solver rejects the input or
-/// fails to converge.
+/// Returns [`LambertOutcome::Err`] carrying a structured
+/// [`LambertErrorOutput`] (with a `kind` discriminator) when the core
+/// solver rejects the input or fails to converge.
 #[wasm_bindgen(js_name = solveLambert)]
-pub fn solve_lambert(request: LambertRequest) -> Result<LambertResponse, JsValue> {
-    solve_lambert_request(request).map_err(|err| {
-        serde_wasm_bindgen::to_value(&err).unwrap_or_else(|serialize_err| {
-            // Fallback to a string if even the serialization fails — should
-            // never happen with the current types, but keeps the panic-free
-            // discipline.
-            JsValue::from_str(&serialize_err.to_string())
-        })
-    })
+#[must_use]
+pub fn solve_lambert(request: LambertRequest) -> LambertOutcome {
+    match solve_lambert_request(request) {
+        Ok(response) => LambertOutcome::Ok { response },
+        Err(error) => LambertOutcome::Err { error },
+    }
 }
 
 /// Solve a batch of Lambert requests from JavaScript.
 ///
-/// Returns one [`BatchResult`] per request, in input order. A failed
+/// Returns one [`LambertOutcome`] per request, in input order. A failed
 /// request does not stop processing of the rest — each element is
 /// independent.
 ///
@@ -387,12 +393,12 @@ pub fn solve_lambert(request: LambertRequest) -> Result<LambertResponse, JsValue
 /// Per-element, same as [`solve_lambert`].
 #[wasm_bindgen(js_name = solveLambertBatch)]
 #[must_use]
-pub fn solve_lambert_batch(requests: Vec<LambertRequest>) -> Vec<BatchResult> {
+pub fn solve_lambert_batch(requests: Vec<LambertRequest>) -> Vec<LambertOutcome> {
     requests
         .into_iter()
         .map(|request| match solve_lambert_request(request) {
-            Ok(response) => BatchResult::Ok { response },
-            Err(error) => BatchResult::Err { error },
+            Ok(response) => LambertOutcome::Ok { response },
+            Err(error) => LambertOutcome::Err { error },
         })
         .collect()
 }

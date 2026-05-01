@@ -1,7 +1,7 @@
 use lambert_izzo_test_support::bodies::MU_EARTH;
 use lambert_izzo_wasm::{
-    BatchResult, LambertErrorOutput, LambertRequest, NonFiniteParameterOutput, PositionOutput,
-    TransferWayInput, solve_lambert_batch, solve_lambert_request,
+    LambertErrorOutput, LambertOutcome, LambertRequest, NonFiniteParameterOutput, PositionOutput,
+    TransferWayInput, solve_lambert, solve_lambert_batch, solve_lambert_request,
 };
 
 fn earth_quarter_circle_request() -> LambertRequest {
@@ -120,10 +120,10 @@ fn batch_request_returns_per_input_results() {
     let results = solve_lambert_batch(vec![valid, degenerate, non_finite]);
 
     assert_eq!(results.len(), 3);
-    assert!(matches!(&results[0], BatchResult::Ok { .. }));
+    assert!(matches!(&results[0], LambertOutcome::Ok { .. }));
     assert!(matches!(
         &results[1],
-        BatchResult::Err {
+        LambertOutcome::Err {
             error: LambertErrorOutput::DegeneratePositionVector {
                 position: PositionOutput::R1,
                 ..
@@ -132,9 +132,32 @@ fn batch_request_returns_per_input_results() {
     ));
     assert!(matches!(
         &results[2],
-        BatchResult::Err {
+        LambertOutcome::Err {
             error: LambertErrorOutput::NonFiniteInput {
                 parameter: NonFiniteParameterOutput::R1Y,
+                ..
+            }
+        }
+    ));
+}
+
+#[test]
+fn single_solve_returns_lambert_outcome() {
+    // Pin the wasm-exposed contract: `solve_lambert` returns the same
+    // tagged union the batch path returns — never throws.
+    let valid = solve_lambert(earth_quarter_circle_request());
+    assert!(matches!(valid, LambertOutcome::Ok { .. }));
+
+    let degenerate = LambertRequest {
+        r1: [0.0, 0.0, 0.0],
+        ..earth_quarter_circle_request()
+    };
+    let outcome = solve_lambert(degenerate);
+    assert!(matches!(
+        outcome,
+        LambertOutcome::Err {
+            error: LambertErrorOutput::DegeneratePositionVector {
+                position: PositionOutput::R1,
                 ..
             }
         }

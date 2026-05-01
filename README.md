@@ -72,7 +72,7 @@ import init, { solveLambert } from "./pkg/lambert_izzo_wasm";
 
 await init();
 
-const response = solveLambert({
+const result = solveLambert({
   r1: [7000, 0, 0],
   r2: [0, 7000, 0],
   tof: 1457, // ~quarter-period of a 7000 km circular Earth orbit
@@ -81,19 +81,22 @@ const response = solveLambert({
   maxRevs: null, // null = single-rev only; pass 1..=32 to search multi-rev branches
 });
 
-console.log(response.single.v1);
-console.log(response.diagnostics.single.iters);
+if (result.kind === "ok") {
+  console.log(result.response.single.v1);
+  console.log(result.response.diagnostics.single.iters);
+} else {
+  console.error(result.error.kind, result.error);
+}
 ```
 
 `maxRevs` is validated at request time. Out-of-range values (`0` or `> 32`)
 reject with a typed `RevsOutOfRange` error before any solver work runs:
 
 ```ts
-try {
-  solveLambert({ ...request, maxRevs: 100 });
-} catch (error) {
-  // error.kind === "RevsOutOfRange"
-  // error.requested === 100, error.max === 32
+const result = solveLambert({ ...request, maxRevs: 100 });
+if (result.kind === "err") {
+  // result.error.kind === "RevsOutOfRange"
+  // result.error.requested === 100, result.error.max === 32
 }
 ```
 

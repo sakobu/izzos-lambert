@@ -415,7 +415,6 @@ dependencies = [
  "lambert_izzo",
  "lambert_izzo_test_support",
  "serde",
- "serde-wasm-bindgen",
  "tsify",
  "wasm-bindgen",
 ]

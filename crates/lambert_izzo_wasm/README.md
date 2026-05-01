@@ -27,7 +27,8 @@ import init, { solveLambert, solveLambertBatch } from "lambert-izzo";
 
 await init();
 
-const response = solveLambert({
+// Single solve — returns a `LambertOutcome` tagged union; never throws.
+const result = solveLambert({
   r1: [7000, 0, 0],
   r2: [0, 7000, 0],
   tof: 1457,
@@ -36,10 +37,14 @@ const response = solveLambert({
   maxRevs: null, // null = single-rev only; pass 1..=32 to search multi-rev branches
 });
 
-console.log(response.single.v1);                    // velocity at r1
-console.log(response.diagnostics.single.iters);     // Householder iterations
+if (result.kind === "ok") {
+  console.log(result.response.single.v1);                    // velocity at r1
+  console.log(result.response.diagnostics.single.iters);     // Householder iterations
+} else {
+  console.error(result.error.kind, result.error);
+}
 
-// Batch — one result per input, ordering preserved, errors per-element.
+// Batch — one outcome per input, ordering preserved, errors per-element.
 const results = solveLambertBatch([request1, request2, request3]);
 for (const r of results) {
   if (r.kind === "ok") {
@@ -70,10 +75,15 @@ type LambertResponse = {
   };
 };
 
-type BatchResult =
+type LambertOutcome =
   | { kind: "ok"; response: LambertResponse }
   | { kind: "err"; error: LambertErrorOutput };
 ```
+
+`solveLambert` returns one `LambertOutcome`; `solveLambertBatch` returns
+`LambertOutcome[]` (one per input, in input order). Neither entry point
+throws on solver-level failures — narrow on `result.kind` to access the
+response or the structured error.
 
 `LambertErrorOutput` is a discriminated union: switch on `error.kind` to
 handle each failure mode. A concrete example:
@@ -102,7 +112,7 @@ text. JS callers writing exhaustive `switch` blocks should include an
 |-------------|-----------|-----|
 | `MultiRevSet` (capacity 32) | `Array<MultiRevPair>` | JS has no fixed-size arrays. |
 | `RevolutionBudget` enum | `maxRevs: number \| null` | `null` = single-rev only; `1..=32` searches multi-rev; out-of-range rejects with `RevsOutOfRange`. |
-| `Result<T, LambertError>` | `BatchResult` tagged union | JS narrows on a discriminator field. |
+| `Result<T, LambertError>` | `LambertOutcome` tagged union | JS narrows on a discriminator field. |
 | Diagnostics inside `LambertSolutions` | Diagnostics inside `LambertResponse` | Mirrors the core 1:1. |
 
 Field names are camelCase via `serde(rename_all = "camelCase")`; types are

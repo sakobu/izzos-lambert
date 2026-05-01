@@ -6,6 +6,24 @@ the project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed (breaking — `lambert_izzo_wasm` only)
+
+- `solveLambert` no longer throws on solver failure. It now returns the
+  same `LambertOutcome` tagged union that `solveLambertBatch` returns
+  per element, so single-call and batch JS callers share one
+  pattern-match shape: `result.kind === "ok"` → `result.response`,
+  `result.kind === "err"` → `result.error` (a structured
+  `LambertErrorOutput`). The Rust core's
+  `Result<T, LambertError>` API is unchanged.
+- `BatchResult` renamed to `LambertOutcome`. It is the per-solve outcome
+  type used by both entry points and is no longer batch-specific.
+
+  Migration: replace `try { const r = solveLambert(req); … } catch (e) { … }`
+  with `const result = solveLambert(req); if (result.kind === "ok") { … }
+  else { … }`. Existing `solveLambertBatch` callers only need to change
+  the imported type name from `BatchResult` to `LambertOutcome` (the
+  runtime shape is identical).
+
 ## [1.0.0] — 2026-04-30
 
 Initial public release. `lambert_izzo` is a `no_std`-friendly Rust

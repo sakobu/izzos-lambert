@@ -86,13 +86,13 @@
           way: document.getElementById("way").value,
           maxRevs,
         };
-        try {
-          const response = solveLambert(request);
+        const result = solveLambert(request);
+        if (result.kind === "ok") {
           out.classList.remove("err");
-          out.textContent = JSON.stringify(response, null, 2);
-        } catch (error) {
+          out.textContent = JSON.stringify(result.response, null, 2);
+        } else {
           out.classList.add("err");
-          out.textContent = "error: " + JSON.stringify(error, null, 2);
+          out.textContent = "error: " + JSON.stringify(result.error, null, 2);
         }
       });
     </script>
